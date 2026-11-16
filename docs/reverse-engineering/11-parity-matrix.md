@@ -43,7 +43,7 @@ Legenda — **Status NinePro:** ✅ implementada · 🟡 parcial · ⬜ pendente
 | Ads › Lead Forms | `/anuncios/formularios` | Tabela formulário/status/idioma/criado/leads + novo | ✅ |
 | Ads › Keywords, Search terms, Bid strategies, Catalogs, Partnership, Account | `/anuncios/...` (fora da sidebar) | Mesmo template da tabela de campanhas | ✅ |
 | Automations › All | `/automacoes` | Lista unificada + limites | ✅ |
-| Automations › New | `/automacoes/nova` (pendente) | Construtor: gatilho, quando roda, o que observa, condições, ação, prévia, rascunho/ativar | ⬜ |
+| Automations › New | `/automacoes/nova` | Construtor em canvas: Início (3 gatilhos, 40 eventos), Só se (E/OU, 18 métricas), Alterar (8 ações), Enviar alerta, prévia com simulação, rascunho/ativar | ✅ |
 | Automations › Templates / Marketplace | `/automacoes/modelos` | Modelos + marketplace com categorias | 🟡 (modelos + simulação) |
 | Commerce › Products / Collections / Discounts / Catalog sync | `/comercio/...` | Vazio "conectar loja" (Shopify/WooCommerce) | ✅ |
 | Creators | `/criadores` | Campanhas com criadores: tabela + 3 passos + criar campanha | ✅ |
@@ -65,7 +65,7 @@ Legenda — **Status NinePro:** ✅ implementada · 🟡 parcial · ⬜ pendente
 | Logs | `/logs` | Período, filtro, ao vivo, contagem de erros, tabela hora/status/atividade/plataforma/perfil/duração | ✅ |
 | Usage | `/uso` | Período, por produto / por conta, tabela produto/usado/pago por/valor/participação | ✅ |
 | Billing (= Balance) | `/faturamento` | Plano, cartão, recarga automática, contas conectadas, o que o cartão libera | ✅ |
-| Settings (13 seções) | `/configuracoes?secao=…` + `/uso`, `/faturamento` | Na referência, Uso e Faturamento abrem as telas próprias; o conteúdo das outras seções não pôde ser lido pela varredura | 🟡 (Perfil, Notificações, Uso, Faturamento; 9 seções a mapear) |
+| Settings (13 seções) | `/configuracoes?secao=…` + `/uso`, `/faturamento` | Perfil, Segurança (2FA, sessões, sair de todos), Retenção, Notificações (alertas, canal, e-mail, webhook), Apps conectados, Slack, Ranking, Provedores de IA, Marca própria (com prévia), SSO, Zona de perigo — ver 12 | ✅ |
 | Hashtag research, Live | — | Redirecionam para Connections na referência (inativas) | n/a |
 | Produto CONSOLE (11 rotas) | — | Fase posterior | ⬜ |
 
@@ -73,4 +73,5 @@ Legenda — **Status NinePro:** ✅ implementada · 🟡 parcial · ⬜ pendente
 ## Resumo (2026-11-16, fim da rodada de paridade 1)
 - **Telas da referência mapeadas:** 77 rotas (ver 01) + 13 seções de Configurações.
 - **Implementadas no NinePro:** 56 rotas navegáveis, verificadas no navegador sem erros de console e sem overflow (1440 px).
-- **Pendentes:** construtor de automação (`/automacoes/nova`), 9 seções de Configurações (exigem mapeamento manual), onboarding de Conexões, conteúdo de Inbox › Campanhas/Contatos (bloqueado na referência) e o produto Console (11 rotas).
+- **Pendentes:** onboarding de Conexões, conteúdo de Inbox › Campanhas/Contatos (bloqueado na referência) e o produto Console (11 rotas).
+- **Rodada 2 (2026-11-16):** construtor de automação e as 13 seções de Configurações concluídos (mapeamento em `12-settings-and-builder.md`).

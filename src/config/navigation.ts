@@ -174,6 +174,7 @@ export const EXTRA_NAV: NavLeaf[] = [
   { id: "live", label: "Ao vivo", path: "/ao-vivo", icon: Mic },
   { id: "balance", label: "Saldo", path: "/saldo", icon: CircleDollarSign },
   { id: "account", label: "Conta de anúncios", path: "/anuncios/conta", icon: Building2 },
+  { id: "automation-new", label: "Nova automação", path: "/automacoes/nova", icon: Workflow },
   { id: "ads-keywords", label: "Palavras-chave", path: "/anuncios/palavras-chave", icon: Hash },
   { id: "ads-search-terms", label: "Termos de pesquisa", path: "/anuncios/termos-de-pesquisa", icon: ScrollText },
   { id: "ads-bids", label: "Estratégias de lance", path: "/anuncios/estrategias-de-lance", icon: Target },

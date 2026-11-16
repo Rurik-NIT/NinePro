@@ -6,13 +6,12 @@ import { useTheme, type ThemePreference } from "@/lib/theme";
 import { useLocalState } from "@/lib/useLocalState";
 import { SETTINGS_NAV } from "@/config/navigation";
 import { Page, PageHeader } from "@/components/layout/AppShell";
-import { Avatar, Tag } from "@/components/ui/Badge";
+import { Avatar } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { Switch } from "@/components/ui/Controls";
 import { Input } from "@/components/ui/Input";
 import { Tooltip } from "@/components/ui/Menu";
 import { useToast } from "@/components/ui/Toast";
-import { InlineNotice } from "@/components/feedback/States";
+import { AiProvidersSection, ConnectedAppsSection, DangerSection, LeaderboardSection, NotificationsSection, RetentionSection, SecuritySection, SlackSection, SsoSection, WhiteLabelSection } from "./settings/Sections";
 
 /** Grupo de configurações: linhas com rótulo/descrição à esquerda e controle à direita (padrão da referência). */
 function SettingsGroup({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
@@ -54,12 +53,11 @@ export default function Settings() {
   const toast = useToast();
   const [name, setName] = useLocalState("ninepro.profile.name", "Gestor Demo");
   const [draftName, setDraftName] = useState(name);
-  const [notif, setNotif] = useLocalState("ninepro.pref.notif", { spike: true, rules: true, leads: false, weekly: true });
 
   return (
     <Page>
       <PageHeader title={section?.label ?? "Configurações"} />
-      <div className="flex max-w-[860px] flex-col gap-8">
+      <div className={cn("flex flex-col gap-8", sectionKey === "marca-propria" ? "max-w-[1200px]" : "max-w-[860px]")}>
         {sectionKey === "perfil" && (
           <>
             <SettingsGroup title="Perfil" description="Como você aparece para a equipe.">
@@ -84,20 +82,16 @@ export default function Settings() {
           </>
         )}
 
-        {sectionKey === "notificacoes" && (
-          <SettingsGroup title="Notificações" description="O que merece interromper o seu dia.">
-            {([["spike", "Picos de gasto", "Quando uma campanha passa do ritmo esperado."], ["rules", "Ações de regras", "Toda vez que uma regra pausar ou escalar algo."], ["leads", "Cada novo lead", "Pode ser muito volume em campanhas de captação."], ["weekly", "Resumo semanal", "Segunda-feira, 8h, por e-mail."]] as const).map(([k, l, d]) => (
-              <div key={k} className="px-4 py-4"><Switch checked={notif[k]} onCheckedChange={(v) => setNotif({ ...notif, [k]: v })} label={l} description={d} /></div>
-            ))}
-          </SettingsGroup>
-        )}
-
-        {!["perfil", "notificacoes"].includes(sectionKey) && (
-          <>
-            <Tag className="self-start">Seção a mapear</Tag>
-            <InlineNotice tone="warning">O conteúdo desta seção no sistema de referência ainda não foi observado: a varredura automática não conseguiu abrir as seções de Configurações. Ela será construída depois do mapeamento manual (docs/reverse-engineering/11-parity-matrix.md).</InlineNotice>
-          </>
-        )}
+        {sectionKey === "seguranca" && <SecuritySection />}
+        {sectionKey === "retencao" && <RetentionSection />}
+        {sectionKey === "notificacoes" && <NotificationsSection />}
+        {sectionKey === "apps" && <ConnectedAppsSection />}
+        {sectionKey === "slack" && <SlackSection />}
+        {sectionKey === "ranking" && <LeaderboardSection />}
+        {sectionKey === "ia" && <AiProvidersSection />}
+        {sectionKey === "marca-propria" && <WhiteLabelSection />}
+        {sectionKey === "sso" && <SsoSection />}
+        {sectionKey === "perigo" && <DangerSection />}
       </div>
     </Page>
   );

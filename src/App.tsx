@@ -20,6 +20,7 @@ const Connections = lazy(() => import("@/pages/Connections"));
 const Settings = lazy(() => import("@/pages/Settings"));
 const DesignSystem = lazy(() => import("@/pages/DesignSystem"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
+const Builder = lazy(() => import("@/pages/automations/Builder"));
 
 const conv = () => import("@/pages/ads/Conversions");
 const assets = () => import("@/pages/ads/Assets");
@@ -79,6 +80,7 @@ const router = createBrowserRouter([
 
       { path: "automacoes", element: S(<Automations />) },
       { path: "automacoes/modelos", element: S(<Automations defaultTab="modelos" />) },
+      { path: "automacoes/nova", element: S(<Builder />) },
 
       { path: "comercio/produtos", element: N(biz, "CommerceProducts") },
       { path: "comercio/colecoes", element: N(biz, "CommerceCollections") },

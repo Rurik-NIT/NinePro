@@ -1,5 +1,6 @@
 import { BellRing, Clock3, FlaskConical, Plus, Scissors, ShieldCheck, Trash2, TrendingUp, Workflow } from "lucide-react";
 import { useState, type ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/cn";
 import { PLATFORMS, RULE_CATEGORIES, RULE_TEMPLATES, type RuleCategory, type RuleTemplate } from "@/data/demo";
 import { useLocalState } from "@/lib/useLocalState";
@@ -18,10 +19,13 @@ import { PlatformDot } from "@/components/data/Platform";
 import { RuleSimulation } from "./automations/RuleSimulation";
 
 const CAT_ICON: Record<RuleCategory, ReactNode> = { cortar: <Scissors />, escalar: <TrendingUp />, alertar: <BellRing />, horario: <Clock3 /> };
-interface InstalledRule { id: string; templateId: string; name: string; target: string; active: boolean; createdAt: string }
+interface InstalledRule { id: string; templateId: string; name: string; target: string; active: boolean; createdAt: string; condition?: string; action?: string }
+const CUSTOM: RuleTemplate = { id: "custom", name: "Automação personalizada", description: "", category: "alertar", platforms: "todas", condition: "", action: "" };
+const tpl = (r: InstalledRule) => RULE_TEMPLATES.find((x) => x.id === r.templateId) ?? CUSTOM;
 
 export default function Automations({ defaultTab = "regras" }: { defaultTab?: string }) {
   const toast = useToast();
+  const navigate = useNavigate();
   const [tab, setTab] = useState(defaultTab);
   const [rules, setRules] = useLocalState<InstalledRule[]>("ninepro.demo.rules", []);
   const [cat, setCat] = useState<RuleCategory | "todas">("todas");
@@ -45,11 +49,11 @@ export default function Automations({ defaultTab = "regras" }: { defaultTab?: st
 
   const columns: Column<InstalledRule>[] = [
     { id: "name", header: "Regra", sticky: true, sortValue: (r) => r.name, cell: (r) => {
-      const t = RULE_TEMPLATES.find((x) => x.id === r.templateId)!;
-      return <div className="flex items-center gap-3"><span className="grid size-8 place-items-center rounded-md bg-surface-2 text-text-muted [&_svg]:size-4">{CAT_ICON[t.category]}</span><div className="flex flex-col"><span className="text-body font-semibold">{r.name}</span><span className="t-caption">{RULE_CATEGORIES[t.category].label}</span></div></div>;
+      const t = tpl(r);
+      return <div className="flex items-center gap-3"><span className="grid size-8 place-items-center rounded-md bg-surface-2 text-text-muted [&_svg]:size-4">{CAT_ICON[t.category]}</span><div className="flex flex-col"><span className="text-body font-semibold">{r.name}</span><span className="t-caption">{t.id === "custom" ? "Personalizada" : RULE_CATEGORIES[t.category].label}</span></div></div>;
     } },
-    { id: "cond", header: "Quando", cell: (r) => <span className="text-secondary text-text-soft">{RULE_TEMPLATES.find((x) => x.id === r.templateId)!.condition}</span> },
-    { id: "action", header: "Então", cell: (r) => <span className="text-secondary text-text-soft">{RULE_TEMPLATES.find((x) => x.id === r.templateId)!.action}</span> },
+    { id: "cond", header: "Quando", cell: (r) => <span className="text-secondary text-text-soft">{r.condition ?? tpl(r).condition}</span> },
+    { id: "action", header: "Então", cell: (r) => <span className="text-secondary text-text-soft">{r.action ?? tpl(r).action}</span> },
     { id: "target", header: "Alvo", cell: (r) => <Tag>{r.target}</Tag> },
     { id: "status", header: "Status", cell: (r) => (
       <div className="flex items-center gap-2.5">
@@ -71,7 +75,7 @@ export default function Automations({ defaultTab = "regras" }: { defaultTab?: st
         description="Proteja o orçamento e escale o que funciona com regras que agem em horário marcado ou ao atingir uma condição."
         actions={<>
           <Button icon={<ShieldCheck />} onClick={() => setLimitsOpen(true)}>Limites</Button>
-          <Button variant="primary" icon={<Plus />} onClick={() => setTab("modelos")}>Nova regra</Button>
+          <Button variant="primary" icon={<Plus />} onClick={() => navigate("/automacoes/nova")}>Nova automação</Button>
         </>} />
 
       {!master && <InlineNotice tone="warning" icon={<ShieldCheck />} action={<Button size="sm" onClick={() => setMaster(true)}>Retomar</Button>}>Todas as regras estão suspensas pela chave geral em Limites.</InlineNotice>}
@@ -82,7 +86,7 @@ export default function Automations({ defaultTab = "regras" }: { defaultTab?: st
             {rules.length === 0 ? (
               <EmptyState icon={<Workflow />} title="Nenhuma regra ainda"
                 description="Comece por um modelo: pausar o que gasta sem converter ou escalar campanhas com bom retorno."
-                actions={<Button variant="primary" icon={<Plus />} onClick={() => setTab("modelos")}>Explorar modelos</Button>} />
+                actions={<><Button variant="primary" icon={<Plus />} onClick={() => navigate("/automacoes/nova")}>Nova automação</Button><Button onClick={() => setTab("modelos")}>Explorar modelos</Button></>} />
             ) : (
               <DataTable caption="Regras instaladas" rows={rules} columns={columns} getId={(r) => r.id} />
             )}

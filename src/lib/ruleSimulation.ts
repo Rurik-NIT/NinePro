@@ -152,3 +152,72 @@ export function simulateRule(templateId: string, p: SimParams): SimResult {
 }
 
 export const RULE_NEEDS_CPA = new Set(["r1", "r8"]);
+
+/* =====================================================================
+ * Simulação genérica para o construtor de automação (condições livres).
+ * ===================================================================== */
+export type CondMetric =
+  | "spend" | "impressions" | "clicks" | "conversions" | "ctr" | "cpc" | "cpm" | "cpa" | "roas"
+  | "dailyBudget" | "budgetUsed" | "dayOfMonth" | "workdayOfMonth" | "cac" | "costPerSale" | "costPerQualifiedLead" | "leadToSale" | "qualifiedRate";
+export type CondPeriod = "hoje" | "ontem" | "3d" | "7d" | "14d" | "30d" | "mes";
+export type CondOp = ">" | ">=" | "<" | "<=" | "=" | "!=";
+export interface Condition { metric: CondMetric; period: CondPeriod; op: CondOp; value: number }
+
+/** Métricas sem dado no histórico de demonstração (dependem de CRM/receita por venda). */
+export const UNSIMULABLE_METRICS: CondMetric[] = ["cac", "costPerSale", "costPerQualifiedLead", "leadToSale", "qualifiedRate"];
+
+function windowOf(days: DayPoint[], i: number, period: CondPeriod): DayPoint[] {
+  switch (period) {
+    case "hoje": return [days[i]];
+    case "ontem": return i > 0 ? [days[i - 1]] : [];
+    case "3d": return days.slice(Math.max(0, i - 2), i + 1);
+    case "7d": return days.slice(Math.max(0, i - 6), i + 1);
+    case "14d": return days.slice(Math.max(0, i - 13), i + 1);
+    case "30d": return days.slice(Math.max(0, i - 29), i + 1);
+    case "mes": { const m = days[i].date.getMonth(); let j = i; while (j > 0 && days[j - 1].date.getMonth() === m) j--; return days.slice(j, i + 1); }
+  }
+}
+
+function metricValue(c: Campaign, days: DayPoint[], i: number, cond: Condition): number {
+  const w = windowOf(days, i, cond.period);
+  const s = (k: keyof Omit<DayPoint, "date">) => sum(w, k);
+  const d = days[i].date;
+  switch (cond.metric) {
+    case "spend": return s("spend");
+    case "impressions": return s("impressions");
+    case "clicks": return s("clicks");
+    case "conversions": return s("conversions");
+    case "ctr": return s("impressions") ? (s("clicks") / s("impressions")) * 100 : NaN;
+    case "cpc": return s("clicks") ? s("spend") / s("clicks") : NaN;
+    case "cpm": return s("impressions") ? (s("spend") / s("impressions")) * 1000 : NaN;
+    case "cpa": return s("conversions") ? s("spend") / s("conversions") : NaN;
+    case "roas": return s("spend") && s("revenue") ? s("revenue") / s("spend") : NaN;
+    case "dailyBudget": return c.budgetType === "diario" ? c.budget : NaN;
+    case "budgetUsed": return c.budgetType === "diario" && c.budget ? (days[i].spend / c.budget) * 100 : NaN;
+    case "dayOfMonth": return d.getDate();
+    case "workdayOfMonth": { let n = 0; for (let x = 1; x <= d.getDate(); x++) { const wd = new Date(d.getFullYear(), d.getMonth(), x).getDay(); if (wd !== 0 && wd !== 6) n++; } return n; }
+    default: return NaN;
+  }
+}
+
+const cmp = (a: number, op: CondOp, b: number) => (Number.isNaN(a) ? false : op === ">" ? a > b : op === ">=" ? a >= b : op === "<" ? a < b : op === "<=" ? a <= b : op === "=" ? a === b : a !== b);
+
+export interface CustomSimResult { simulable: boolean; reason?: string; hits: { date: Date; campaign: Campaign }[]; campaignsAffected: number; daily: { date: Date; events: number }[]; window: { from: Date; to: Date } }
+
+export function simulateConditions(conds: Condition[], logic: "E" | "OU", days = 30): CustomSimResult {
+  const window = { from: new Date(TODAY.getTime() - (days - 1) * DAY), to: TODAY };
+  const blocked = conds.find((c) => UNSIMULABLE_METRICS.includes(c.metric));
+  if (blocked) return { simulable: false, reason: "Uma das métricas depende de dados de vendas/CRM que o histórico de demonstração não tem.", hits: [], campaignsAffected: 0, daily: [], window };
+  const hits: CustomSimResult["hits"] = [];
+  for (const c of CAMPAIGNS) {
+    c.days.forEach((d, i) => {
+      if (d.date < window.from || d.date > window.to || d.spend === 0) return;
+      const results = conds.map((cond) => cmp(metricValue(c, c.days, i, cond), cond.op, cond.value));
+      const ok = conds.length === 0 ? true : logic === "E" ? results.every(Boolean) : results.some(Boolean);
+      if (ok) hits.push({ date: d.date, campaign: c });
+    });
+  }
+  const daily: CustomSimResult["daily"] = [];
+  for (let t = window.from.getTime(); t <= window.to.getTime(); t += DAY) daily.push({ date: new Date(t), events: hits.filter((h) => h.date.getTime() === t).length });
+  return { simulable: true, hits: hits.sort((a, b) => b.date.getTime() - a.date.getTime()), campaignsAffected: new Set(hits.map((h) => h.campaign.id)).size, daily, window };
+}
