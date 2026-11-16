@@ -59,7 +59,7 @@ export function KpiStrip({ items, loading, hero = true, className }: { items: Kp
           ) : (
             <div className="flex items-end justify-between gap-3">
               <div className="flex min-w-0 flex-col gap-1">
-                <span className={cn("num truncate font-bold text-text", i === 0 && hero ? "text-kpi sm:text-kpi-lg" : "text-kpi")}>{formatValue(k.value, k.format)}</span>
+                <span className={cn("num truncate font-bold text-text", i === 0 && hero ? "text-kpi 2xl:text-kpi-lg" : "text-kpi")}>{formatValue(k.value, k.format)}</span>
                 <span className="flex items-center gap-1.5">
                   {k.previous !== undefined && <Delta current={k.value} previous={k.previous} better={k.better} />}
                   <span className="t-caption">vs. anterior</span>
