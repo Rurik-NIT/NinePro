@@ -4,7 +4,7 @@ Data: 2026-11-16 · Branch: `ninepro/foundation`
 
 | # | Critério | Status | Evidência / observação |
 |---|---|---|---|
-| 1 | REA validado e efetivamente utilizado | **Não cumprido** | O MCP REA está conectado, mas as ferramentas web exigem um endpoint CDP de loopback, que o painel do navegador não expõe. A engenharia reversa usou as ferramentas do painel e isso está declarado. Ver `reverse-engineering/09-unknowns-and-limitations.md` §L1 |
+| 1 | REA validado e efetivamente utilizado | **Cumprido** | 10 chamadas REA com Evidence IDs: inspeção, screenshot verificado, cenário com 2.545 eventos de rede, exportação e análise estática. Ver `reverse-engineering/10-rea-evidence.md`. Limite: análise estática em 4 de 62 scripts |
 | 2 | Sistema de referência mapeado | Cumprido (com limites) | 77 rotas, sidebar, drill-down, paleta ⌘K, menus. A conta não tem dados, então as telas com dados ficaram DESCONHECIDAS |
 | 3 | Inventário de módulos | Cumprido | `reverse-engineering/02-modules-inventory.md` |
 | 4 | Documentação de engenharia reversa | Cumprido | `reverse-engineering/00…09` + 34 screenshots |
@@ -36,7 +36,8 @@ Data: 2026-11-16 · Branch: `ninepro/foundation`
 7. Chunk principal de 948 kB → divisão de vendors (o filtro inicial casava com o próprio caminho do workspace e foi corrigido).
 
 ## Pendências
-- **REA:** abrir o Edge com `--remote-debugging-port` num perfil separado e repetir a inspeção pelo REA (`inspect_web_page`, `analyze_web_bundle`).
+- **REA:** ampliar a análise estática para os 58 scripts restantes e capturar os chunks das rotas de Ads (lotes menores, para não derrubar a conexão).
+- **Simular regra (backtest):** existe na API do Zernio (`automations/backtest`), mas a UI não foi observada. Avaliar para o NinePro.
 - **Telas com dados no sistema funcional:** exigem uma conta de anúncios de teste conectada (feito pelo usuário).
 - **Integrações reais, autenticação e persistência em servidor:** fora do escopo desta etapa.
 - **Testes automatizados** (unitários e visuais): ainda não há.

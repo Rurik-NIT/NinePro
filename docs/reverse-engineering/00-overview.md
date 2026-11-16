@@ -18,10 +18,10 @@
 
 | Ferramenta | Usada? | Para quê |
 |---|---|---|
-| REA (MCP `rea`) | **Conectado, mas NÃO usado na inspeção web** | As ferramentas web do REA (`inspect_web_page`, `capture_web_screenshot`, `analyze_web_bundle`, `observe_web_session`) exigem um endpoint CDP de loopback (`http://127.0.0.1:PORTA`). O painel do navegador do app não expõe CDP, e nenhum navegador local tinha porta de depuração (portas 9222/9223/9229/9333 testadas e mais 6 portas loopback abertas checadas). Ver `09-unknowns-and-limitations.md`. |
+| REA (MCP `rea`) | **Sim**, na 2ª rodada | Conectado a um Edge com depuração (perfil separado). Inspeção passiva, screenshot, cenário de navegação com rede (2.545 eventos), exportação e análise estática dos scripts. Ver `10-rea-evidence.md`. Na 1ª rodada não havia endpoint CDP disponível |
 | Painel do navegador do app (`mcp__Claude_Browser__*`) | **Sim**, fonte de todas as evidências | Screenshots, árvore de acessibilidade, texto da página, estilos computados e regras CSS via JS somente leitura, extração de rotas a partir dos bundles JS já carregados pela página. |
 
-> Critério de aceitação nº 1 ("REA validado e efetivamente utilizado") **não está cumprido** nesta rodada. O REA está instalado e conectado, mas não teve alvo inspecionável.
+> Critério de aceitação nº 1 ("REA validado e efetivamente utilizado"): **cumprido na 2ª rodada**, com evidências registradas em `10-rea-evidence.md`.
 
 ## Regras de preservação seguidas
 

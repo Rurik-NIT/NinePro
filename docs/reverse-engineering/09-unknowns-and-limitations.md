@@ -1,12 +1,7 @@
 # 09 — Desconhecidos e limitações
 
-## L1. REA sem alvo inspecionável (bloqueia o critério de aceitação nº 1)
-- **Fato:** o MCP `rea` está conectado e expõe ~200 ferramentas, incluindo as web (`list_browser_targets`, `inspect_web_page`, `capture_web_screenshot`, `analyze_web_bundle`, `observe_web_session`, `inspect_web_event_listeners`).
-- **Bloqueio:** todas exigem `cdp_endpoint` em loopback. O painel do navegador do app não expõe CDP para o shell; o Claude in Chrome não está conectado; o Edge está aberto sem `--remote-debugging-port`.
-- **Alternativas, em ordem de preferência:**
-  1. Abrir o Edge num perfil separado com `--remote-debugging-port=9222 --user-data-dir=%LOCALAPPDATA%\ninepro-cdp`; você faz o login no Zernio; o REA roda `inspect_web_page` + `analyze_web_bundle` (rotas, endpoints, vendors) e `observe_web_session` enquanto navegamos.
-  2. Análise estática com o REA (`analyze_javascript_application` / `recover_javascript_sources`) dos bundles JS do Zernio salvos localmente. **Exige a sua permissão para baixar os arquivos.**
-- Até lá, toda evidência vem das ferramentas do painel do navegador, e está declarada assim.
+## L1. REA: RESOLVIDO
+Na 1ª rodada não havia endpoint CDP. Na 2ª, o Edge foi aberto com `--remote-debugging-port=9222` num perfil separado, e o usuário fez o login. O REA foi usado de fato (10 chamadas com Evidence IDs). Ver `10-rea-evidence.md`. A limitação que sobra: `analyze_web_bundle` derrubou a conexão pelo volume, e a análise estática cobriu 4 de 62 scripts.
 
 ## L2. Conta sem dados
 Nenhuma conta de anúncio, rede social ou GA4 conectada. Por isso são **DESCONHECIDOS**:
