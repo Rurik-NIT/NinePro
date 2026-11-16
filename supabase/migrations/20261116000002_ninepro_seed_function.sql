@@ -13,7 +13,9 @@ declare
   c record; s uuid; a uuid; f_vip uuid; f_b2b uuid;
   n int;
 begin
-  if not public.is_admin(ws) then raise exception 'sem permissão para popular este workspace'; end if;
+  -- No app (usuário logado) exige ser admin do workspace; no SQL Editor (sem auth.uid) é o dono do banco rodando.
+  if auth.uid() is not null and not public.is_admin(ws) then raise exception 'sem permissão para popular este workspace'; end if;
+  if not exists (select 1 from public.workspaces where id = ws) then raise exception 'workspace % não existe', ws; end if;
   if exists (select 1 from public.campaigns where workspace_id = ws) then raise exception 'o workspace já tem campanhas'; end if;
 
   insert into public.ad_accounts (workspace_id, platform, external_id, name) values
