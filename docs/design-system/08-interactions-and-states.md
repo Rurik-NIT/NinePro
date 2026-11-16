@@ -32,7 +32,8 @@ Vazio (ícone, título, explicação, 0–2 ações), carregando, erro (com "Ten
 | Hierarquia | Expandir campanha → conjuntos → anúncios, métricas proporcionais |
 | Nova campanha | Modal de 2 colunas, validação no envio, "Criar pausada" marcado; sem integração, só valida e informa |
 | Lead | Clicar na linha → drawer com detalhes e troca de status (local) |
-| Regras | Modelos por categoria → "Usar modelo" → escolher alvo → aparece em Minhas regras; chave geral suspende todas |
+| Regras | Modelos por categoria → "Simular e usar" → escolher alvo → **simulação** → Adicionar → aparece em Minhas regras; chave geral suspende todas |
+| Simular regra (backtest) | No modal do modelo e em "Simular" de uma regra instalada: janela de 14/30/60 dias, meta de CPA (quando a regra usa), resultado com disparos, campanhas afetadas, impacto no investimento e nas conversões, disparos por dia e lista dos mais recentes. Regras por horário mostram aviso de que não são simuláveis com dados diários |
 | Exportar CSV | Campanhas e leads, respeitando os filtros atuais |
 
 ## Teclado

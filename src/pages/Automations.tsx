@@ -1,4 +1,4 @@
-import { BellRing, Clock3, Plus, Scissors, ShieldCheck, Trash2, TrendingUp, Workflow } from "lucide-react";
+import { BellRing, Clock3, FlaskConical, Plus, Scissors, ShieldCheck, Trash2, TrendingUp, Workflow } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { PLATFORMS, RULE_CATEGORIES, RULE_TEMPLATES, type RuleCategory, type RuleTemplate } from "@/data/demo";
@@ -15,6 +15,7 @@ import { useToast } from "@/components/ui/Toast";
 import { DemoBadge, EmptyState, InlineNotice } from "@/components/feedback/States";
 import { DataTable, type Column } from "@/components/data/DataTable";
 import { PlatformDot } from "@/components/data/Platform";
+import { RuleSimulation } from "./automations/RuleSimulation";
 
 const CAT_ICON: Record<RuleCategory, ReactNode> = { cortar: <Scissors />, escalar: <TrendingUp />, alertar: <BellRing />, horario: <Clock3 /> };
 interface InstalledRule { id: string; templateId: string; name: string; target: string; active: boolean; createdAt: string }
@@ -31,6 +32,7 @@ export default function Automations() {
   const [master, setMaster] = useLocalState("ninepro.demo.rulesMaster", true);
   const [cap, setCap] = useLocalState("ninepro.demo.rulesCap", "30");
   const [removing, setRemoving] = useState<InstalledRule | null>(null);
+  const [simulating, setSimulating] = useState<InstalledRule | null>(null);
 
   const templates = RULE_TEMPLATES.filter((t) => (cat === "todas" || t.category === cat) && (!q || `${t.name} ${t.description}`.toLowerCase().includes(q.toLowerCase())));
 
@@ -55,7 +57,12 @@ export default function Automations() {
         <StatusBadge tone={!master ? "warning" : r.active ? "positive" : "neutral"}>{!master ? "Suspensa" : r.active ? "Ativa" : "Desligada"}</StatusBadge>
       </div>
     ) },
-    { id: "rm", header: <span className="sr-only">Remover</span>, width: 48, cell: (r) => <IconButton label={`Remover ${r.name}`} size="sm" onClick={() => setRemoving(r)}><Trash2 /></IconButton> },
+    { id: "rm", header: <span className="sr-only">Ações</span>, width: 140, cell: (r) => (
+      <div className="flex items-center justify-end gap-1">
+        <Button size="sm" variant="ghost" icon={<FlaskConical />} onClick={() => setSimulating(r)}>Simular</Button>
+        <IconButton label={`Remover ${r.name}`} size="sm" onClick={() => setRemoving(r)}><Trash2 /></IconButton>
+      </div>
+    ) },
   ];
 
   return (
@@ -112,7 +119,7 @@ export default function Automations() {
                     <span className="flex items-center gap-1.5 t-caption">
                       {t.platforms === "todas" ? "Todas as plataformas" : t.platforms.map((p) => <span key={p} className="inline-flex items-center gap-1"><PlatformDot id={p} className="size-2" />{PLATFORMS[p].label}</span>)}
                     </span>
-                    <Button size="sm" variant="secondary" icon={<Plus />} onClick={() => setInstalling(t)}>Usar modelo</Button>
+                    <Button size="sm" variant="secondary" icon={<FlaskConical />} onClick={() => setInstalling(t)}>Simular e usar</Button>
                   </div>
                 </li>
               ))}
@@ -121,7 +128,7 @@ export default function Automations() {
         </TabPanel>
       </Tabs>
 
-      <Modal open={!!installing} onOpenChange={(o) => { if (!o) { setInstalling(null); setTarget(""); } }} size="sm" icon={installing ? CAT_ICON[installing.category] : undefined}
+      <Modal open={!!installing} onOpenChange={(o) => { if (!o) { setInstalling(null); setTarget(""); } }} size="lg" icon={installing ? CAT_ICON[installing.category] : undefined}
         title={installing?.name ?? ""} description={installing?.description}
         footer={<><Button variant="ghost" onClick={() => setInstalling(null)}>Cancelar</Button><Button variant="primary" disabled={!target} onClick={install}>Adicionar regra</Button></>}>
         <div className="flex flex-col gap-4">
@@ -129,9 +136,15 @@ export default function Automations() {
             {(p) => <Select id={p.id} value={target || undefined} onValueChange={setTarget} placeholder="Selecionar alvo"
               options={[{ value: "Todas as campanhas", label: "Todas as campanhas" }, { value: "Campanhas de vendas", label: "Campanhas de vendas" }, { value: "Campanhas de leads", label: "Campanhas de leads" }]} />}
           </Field>
+          {installing && <RuleSimulation templateId={installing.id} target={target} capPct={Number(cap) || 30} />}
           <InlineNotice tone="info">Demonstração: a regra é salva neste navegador e não altera nenhuma campanha.</InlineNotice>
         </div>
       </Modal>
+
+      <Drawer open={!!simulating} onOpenChange={(o) => !o && setSimulating(null)} width={600} icon={<FlaskConical />}
+        title={simulating ? `Simular: ${simulating.name}` : ""} description={simulating ? `Alvo: ${simulating.target}` : undefined}>
+        {simulating && <RuleSimulation templateId={simulating.templateId} target={simulating.target} capPct={Number(cap) || 30} />}
+      </Drawer>
 
       <Drawer open={limitsOpen} onOpenChange={setLimitsOpen} title="Limites das regras" icon={<ShieldCheck />}
         description="Valem para todas as regras da equipe. Religar a chave geral devolve cada regra ao estado anterior.">

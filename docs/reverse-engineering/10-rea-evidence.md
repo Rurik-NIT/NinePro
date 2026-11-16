@@ -65,7 +65,7 @@
 ## 5. Implicações para o NinePro
 1. A tabela de campanhas já segue o modelo de árvore. Quando houver backend, o contrato natural é paginar no servidor por nível, com `compare`.
 2. Os "Pontos de atenção" da visão geral têm equivalente real (`ads/alerts`). Hoje são derivados localmente das métricas fictícias.
-3. **Oportunidade confirmada no código:** "Simular regra" (backtest) antes de ativar. Fica registrada como pendência, **não implementada**, porque a UI dela não foi observada.
+3. **"Simular regra" (backtest) — IMPLEMENTADO no NinePro** a partir deste achado. A UI do Zernio para isso não foi observada, então o fluxo e o modelo de cálculo são desenho próprio (`src/lib/ruleSimulation.ts`, `src/pages/automations/RuleSimulation.tsx`). O modelo é simplificado e declarado na tela.
 
 ## 6. Limitações
 - `analyze_web_bundle` derrubou a conexão MCP pelo volume. A análise estática cobriu **4 dos 62 scripts exportados** (os que referenciam a API de Ads/automações); os outros 58 ficaram fora do escopo, e as relações deles são desconhecidas.

@@ -32,6 +32,11 @@ Input (prefixo/sufixo, tamanhos, inválido), SearchInput (Esc limpa), Textarea (
 ## Interação
 Button (primary, secondary, outline, ghost, danger; sm/md/lg; ícone; loading), IconButton (nome acessível obrigatório), `buttonClasses()` para links, Menu (itens, atalhos, check, radio, submenu, destrutivo), ContextMenu, Tooltip, Popover, Modal (sm–xl), Drawer, ConfirmDialog (`alertdialog`), Tabs (com contagem), SegmentedControl, Toast (4 tons, com ação "Desfazer").
 
+## Específicos de módulo
+| Componente | Arquivo | Notas |
+|---|---|---|
+| RuleSimulation | `pages/automations/RuleSimulation.tsx` | Backtest de regra: controles de janela e meta, faixa de resultado, barras de disparo por dia, lista de disparos, nota do modelo. Motor em `lib/ruleSimulation.ts` |
+
 ## Estados (`components/feedback`)
 EmptyState, LoadingState, Skeleton, ErrorState (com "Tentar novamente"), SuccessState, InlineNotice, DemoBadge.
 

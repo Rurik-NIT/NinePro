@@ -79,8 +79,8 @@ export default {
       keyframes: {
         shimmer: { "0%": { backgroundPosition: "-400px 0" }, "100%": { backgroundPosition: "400px 0" } },
         "fade-in": { from: { opacity: "0" }, to: { opacity: "1" } },
-        "pop-in": { from: { opacity: "0", transform: "translateY(4px) scale(.98)" }, to: { opacity: "1", transform: "none" } },
-        "slide-in": { from: { transform: "translateX(16px)", opacity: "0" }, to: { transform: "none", opacity: "1" } },
+        "pop-in": { from: { opacity: "0", translate: "0 4px", scale: ".98" }, to: { opacity: "1", translate: "0 0", scale: "1" } },
+        "slide-in": { from: { translate: "16px 0", opacity: "0" }, to: { translate: "0 0", opacity: "1" } },
       },
       animation: {
         shimmer: "shimmer 1.4s linear infinite",

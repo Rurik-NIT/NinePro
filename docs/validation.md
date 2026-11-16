@@ -37,7 +37,7 @@ Data: 2026-11-16 · Branch: `ninepro/foundation`
 
 ## Pendências
 - **REA:** ampliar a análise estática para os 58 scripts restantes e capturar os chunks das rotas de Ads (lotes menores, para não derrubar a conexão).
-- **Simular regra (backtest):** existe na API do Zernio (`automations/backtest`), mas a UI não foi observada. Avaliar para o NinePro.
+- **Simular regra:** implementada (2026-11-16) sobre dados fictícios. Ainda falta: simulação por conjunto de anúncios (hoje é por campanha), regras por horário (exigem dados horários) e redistribuição entre campanhas (r9).
 - **Telas com dados no sistema funcional:** exigem uma conta de anúncios de teste conectada (feito pelo usuário).
 - **Integrações reais, autenticação e persistência em servidor:** fora do escopo desta etapa.
 - **Testes automatizados** (unitários e visuais): ainda não há.
