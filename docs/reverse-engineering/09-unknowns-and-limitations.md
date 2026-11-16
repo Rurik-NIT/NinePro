@@ -31,5 +31,5 @@ Commerce, Creators, WhatsApp, iMessage, Phone, Developers (API Keys, Users, Webh
 - Rotas ocultas de Ads exibem a sidebar raiz em vez do drill-down.
 - Carregamentos lentos (6–12s) em várias páginas, com skeletons longos.
 
-## L6. Behance / CoachIQ
-Ao abrir o link do Behance no painel, a página respondeu **HTTP 403**. A análise do CoachIQ (Etapa C) ainda não foi feita e vai precisar de outra abordagem (ver o relatório da sessão).
+## L6. Behance / CoachIQ — RESOLVIDO
+O Behance respondeu HTTP 403 no painel. O usuário baixou as 25 pranchas com `gallery-dl`; elas estão em `docs/visual-reference/coachiq/` e a análise está em `docs/visual-reference/coachiq-analysis.md`.

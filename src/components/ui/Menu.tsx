@@ -123,6 +123,7 @@ export function Select({
   ariaLabel,
   id,
   prefix,
+  invalid,
 }: {
   value?: string;
   onValueChange: (v: string) => void;
@@ -133,12 +134,14 @@ export function Select({
   ariaLabel?: string;
   id?: string;
   prefix?: ReactNode;
+  invalid?: boolean;
 }) {
   return (
     <SelectP.Root value={value} onValueChange={onValueChange}>
       <SelectP.Trigger
         id={id}
         aria-label={ariaLabel}
+        aria-invalid={invalid || undefined}
         className={cn(
           fieldBase,
           "inline-flex items-center justify-between gap-2 px-3 text-left data-[placeholder]:text-text-dim [&>span]:truncate",

@@ -79,7 +79,7 @@
    Profundidade por níveis de superfície, não por sombra.
    ================================================================= */
 :root,
-:root[data-theme="dark"] {
+[data-theme="dark"] {
   color-scheme: dark;
 
   --canvas: var(--graphite-000);       /* fundo atrás de tudo */
@@ -139,7 +139,7 @@
    TEMA CLARO — equivalente, não invertido
    Canvas levemente acinzentado; superfícies brancas fazem a elevação.
    ================================================================= */
-:root[data-theme="light"] {
+[data-theme="light"] {
   color-scheme: light;
 
   --canvas: var(--graphite-900);
@@ -194,3 +194,6 @@
   --skeleton: #eef0ec;
   --skeleton-shine: #f6f7f5;
 }
+
+/* Escopos aninhados (ex.: prévia lado a lado no Design System) herdam texto e fundo do tema local */
+[data-theme] [data-theme] { color: var(--text); }

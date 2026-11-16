@@ -93,13 +93,13 @@ export default function Creatives() {
       {ads.length === 0 ? (
         <div className="panel"><EmptyState icon={<ImageIcon />} title="Sem criativos com veiculação no período" description="Ajuste o período ou as plataformas." /></div>
       ) : view === "grid" ? (
-        <ul className="grid grid-cols-1 gap-gutter sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        <ul className="grid grid-cols-1 gap-gutter sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
           {ads.map((a, i) => {
             const roas = METRICS.roas.compute(a.totals);
             return (
               <li key={a.id} className="panel group flex flex-col overflow-hidden transition-colors hover:border-line-strong">
                 <div className="relative">
-                  <Thumb hue={a.hue} format={a.format} className="aspect-[16/9] w-full" />
+                  <Thumb hue={a.hue} format={a.format} className="aspect-[2/1] w-full border-b border-line-soft" />
                   <span className="num absolute left-3 top-3 rounded-xs bg-overlay px-1.5 py-0.5 font-mono text-[10.5px] font-medium text-text-soft ring-1 ring-line">#{String(i + 1).padStart(2, "0")}</span>
                   <span className="absolute right-3 top-3"><Tag className="bg-overlay">{a.format}</Tag></span>
                 </div>

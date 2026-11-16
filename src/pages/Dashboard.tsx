@@ -67,7 +67,7 @@ export default function Dashboard() {
     const roas = METRICS.roas.compute(t);
     if (roas >= 4) out.push({ id: c.id + "roas", tone: "positive", title: c.name, detail: `ROAS ${formatValue(roas, "ratio")} — candidata a escalar` });
     return out;
-  }).slice(0, 5);
+  }).sort((a, b) => ["negative", "warning", "positive"].indexOf(a.tone) - ["negative", "warning", "positive"].indexOf(b.tone)).slice(0, 5);
 
   /* Ritmo de orçamento: mês corrente */
   const now = new Date();
@@ -214,7 +214,7 @@ export default function Dashboard() {
                     <span className="num text-secondary"><b className="text-text">{formatValue(p.spent, "currency0")}</b> <span className="text-text-dim">/ {formatValue(p.planned, "currency0")}</span></span>
                   </div>
                   <div className="relative">
-                    <Progress value={ratio} tone={ahead ? "warning" : "accent"} label={`Ritmo de ${PLATFORMS[p.id].label}`} />
+                    <Progress value={ratio} tone={ahead ? "warning" : "accent"} ariaLabel={`Ritmo de ${PLATFORMS[p.id].label}`} />
                     <span className="absolute -top-1 h-3.5 w-px bg-text-soft" style={{ left: `${p.expected * 100}%` }} title="Esperado para hoje" aria-hidden />
                   </div>
                   <span className="t-caption">{ahead ? "Acima do ritmo esperado para hoje" : "Dentro do ritmo"}</span>

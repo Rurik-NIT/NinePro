@@ -99,7 +99,7 @@ export function CreateCampaignModal({ open, onOpenChange }: { open: boolean; onO
           <p className="t-label">Entrega</p>
           <Field label="Conta de anúncios" required error={e("platform")}>
             {(p) => (
-              <Select id={p.id} value={platform || undefined} onValueChange={(v) => setPlatform(v as PlatformId)} placeholder="Selecione a conta"
+              <Select id={p.id} invalid={p.invalid} value={platform || undefined} onValueChange={(v) => setPlatform(v as PlatformId)} placeholder="Selecione a conta"
                 options={PLATFORM_ORDER.map((id) => ({ value: id, label: PLATFORMS[id].label, icon: <PlatformDot id={id} /> }))} />
             )}
           </Field>

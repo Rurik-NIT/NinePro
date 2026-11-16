@@ -59,13 +59,13 @@ export function KpiStrip({ items, loading, hero = true, className }: { items: Kp
           ) : (
             <div className="flex items-end justify-between gap-3">
               <div className="flex min-w-0 flex-col gap-1">
-                <span className={cn("num truncate font-bold text-text", i === 0 && hero ? "text-kpi-lg" : "text-kpi")}>{formatValue(k.value, k.format)}</span>
+                <span className={cn("num truncate font-bold text-text", i === 0 && hero ? "text-kpi sm:text-kpi-lg" : "text-kpi")}>{formatValue(k.value, k.format)}</span>
                 <span className="flex items-center gap-1.5">
                   {k.previous !== undefined && <Delta current={k.value} previous={k.previous} better={k.better} />}
                   <span className="t-caption">vs. anterior</span>
                 </span>
               </div>
-              {k.spark && <Sparkline data={k.spark} className="h-9 w-20 shrink-0" />}
+              {k.spark && <Sparkline data={k.spark} className="h-9 w-14 shrink-0 sm:w-20" />}
             </div>
           )}
         </div>
@@ -94,8 +94,8 @@ export function MetricCard({ label, value, format, previous, better, footer, ico
 }
 
 /** ProgressIndicator — consumo de orçamento, meta atingida, limite. */
-export function Progress({ value, max = 1, tone = "accent", label, showValue, size = "md" }: {
-  value: number; max?: number; tone?: "accent" | "positive" | "warning" | "negative" | "neutral"; label?: string; showValue?: boolean; size?: "sm" | "md";
+export function Progress({ value, max = 1, tone = "accent", label, ariaLabel, showValue, size = "md" }: {
+  value: number; max?: number; tone?: "accent" | "positive" | "warning" | "negative" | "neutral"; label?: string; ariaLabel?: string; showValue?: boolean; size?: "sm" | "md";
 }) {
   const pct = Math.max(0, Math.min(1, value / max));
   const bar = { accent: "bg-accent", positive: "bg-positive", warning: "bg-warning", negative: "bg-negative", neutral: "bg-text-dim" }[tone];
@@ -107,7 +107,7 @@ export function Progress({ value, max = 1, tone = "accent", label, showValue, si
           {showValue && <span className="num text-caption font-bold text-text-soft">{Math.round(pct * 100)}%</span>}
         </div>
       )}
-      <div role="progressbar" aria-valuenow={Math.round(pct * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={label} className={cn("w-full overflow-hidden rounded-full bg-bar-idle", size === "sm" ? "h-1" : "h-1.5")}>
+      <div role="progressbar" aria-valuenow={Math.round(pct * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={ariaLabel ?? label} className={cn("w-full overflow-hidden rounded-full bg-bar-idle", size === "sm" ? "h-1" : "h-1.5")}>
         <div className={cn("h-full rounded-full transition-[width] duration-500 ease-enter", bar)} style={{ width: `${pct * 100}%` }} />
       </div>
     </div>
