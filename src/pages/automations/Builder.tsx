@@ -149,7 +149,7 @@ export default function AutomationBuilder() {
       {/* barra superior */}
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2.5 lg:px-1">
         <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Dê um nome a esta automação" aria-label="Nome da automação" wrapperClassName="min-w-[220px] flex-1" />
-        <DemoBadge />
+        <DemoBadge liveable />
         <Tag tone={status === "Ativa" ? "accent" : undefined}>{status}</Tag>
         <Button onClick={saveDraft}>Salvar rascunho</Button>
         <Button variant="primary" icon={<Zap />} onClick={activate}>Ativar</Button>

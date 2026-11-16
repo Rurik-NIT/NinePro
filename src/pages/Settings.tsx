@@ -1,9 +1,12 @@
 import { Monitor, Moon, Sun } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { cn } from "@/lib/cn";
 import { useTheme, type ThemePreference } from "@/lib/theme";
 import { useLocalState } from "@/lib/useLocalState";
+import { useAuth } from "@/lib/auth";
+import { useWorkspace } from "@/lib/workspace";
+import { supabase } from "@/lib/supabase";
 import { SETTINGS_NAV } from "@/config/navigation";
 import { Page, PageHeader } from "@/components/layout/AppShell";
 import { Avatar } from "@/components/ui/Badge";
@@ -51,8 +54,34 @@ export default function Settings() {
   const section = SETTINGS_NAV.children![0].items.find((l) => l.path.endsWith(`secao=${sectionKey}`));
   const { preference, setPreference } = useTheme();
   const toast = useToast();
-  const [name, setName] = useLocalState("ninepro.profile.name", "Gestor Demo");
+  const auth = useAuth();
+  const ws = useWorkspace();
+  const live = auth.mode === "supabase";
+  const [localName, setLocalName] = useLocalState("ninepro.profile.name", "Gestor Demo");
+  const name = live ? ws.profileName : localName;
   const [draftName, setDraftName] = useState(name);
+  useEffect(() => { setDraftName(name); }, [name]);
+  const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [busy, setBusy] = useState<"nome" | "senha" | null>(null);
+  const saveName = async () => {
+    const n = draftName.trim();
+    if (!live) { setLocalName(n); toast({ tone: "success", title: "Nome atualizado" }); return; }
+    setBusy("nome");
+    const { error } = await supabase!.from("profiles").update({ full_name: n }).eq("id", auth.user!.id);
+    setBusy(null);
+    if (error) { toast({ tone: "error", title: "Não foi possível salvar", description: error.message }); return; }
+    await ws.reload();
+    toast({ tone: "success", title: "Nome atualizado" });
+  };
+  const savePassword = async () => {
+    setBusy("senha");
+    const { error } = await supabase!.auth.updateUser({ password: pw });
+    setBusy(null);
+    if (error) { toast({ tone: "error", title: "Não foi possível trocar a senha", description: /same|different/i.test(error.message) ? "A nova senha precisa ser diferente da atual." : error.message }); return; }
+    setPw(""); setPw2("");
+    toast({ tone: "success", title: "Senha alterada", description: "Use a nova senha no próximo acesso." });
+  };
 
   return (
     <Page>
@@ -61,14 +90,23 @@ export default function Settings() {
         {sectionKey === "perfil" && (
           <>
             <SettingsGroup title="Perfil" description="Como você aparece para a equipe.">
-              <Row label="Foto" description="JPEG, PNG, WebP ou GIF, até 5 MB."><div className="flex items-center gap-3"><Avatar name={name} size={44} /><Tooltip content="Upload chega com autenticação"><span tabIndex={0}><Button size="sm" disabled>Enviar</Button></span></Tooltip><Button size="sm" variant="danger" disabled>Remover</Button></div></Row>
+              <Row label="Foto" description="JPEG, PNG, WebP ou GIF, até 5 MB."><div className="flex items-center gap-3"><Avatar name={name} size={44} /><Tooltip content="Envio de foto chega em breve"><span tabIndex={0}><Button size="sm" disabled>Enviar</Button></span></Tooltip><Button size="sm" variant="danger" disabled>Remover</Button></div></Row>
               <Row label="Nome">
                 <div className="flex gap-2"><Input value={draftName} onChange={(e) => setDraftName(e.target.value)} wrapperClassName="w-full sm:w-[240px]" />
-                  <Button variant="primary" disabled={!draftName.trim() || draftName === name} onClick={() => { setName(draftName.trim()); toast({ tone: "success", title: "Nome atualizado" }); }}>Salvar</Button></div>
+                  <Button variant="primary" loading={busy === "nome"} disabled={draftName.trim().length < 2 || draftName.trim() === name} onClick={() => void saveName()}>Salvar</Button></div>
               </Row>
             </SettingsGroup>
             <SettingsGroup title="Acesso" description="O e-mail e a senha com que você entra.">
-              <Row label="E-mail" description="Gerenciado pelo provedor de login."><span className="t-secondary">Sem autenticação nesta versão</span></Row>
+              <Row label="E-mail" description="Para trocar o e-mail, fale com o administrador."><span className="t-secondary">{live ? auth.user?.email : "Modo demonstração"}</span></Row>
+              {live && (
+                <Row label="Nova senha" description="Pelo menos 8 caracteres." stack>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Nova senha" autoComplete="new-password" aria-label="Nova senha" wrapperClassName="w-full sm:w-[220px]" />
+                    <Input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="Repita a nova senha" autoComplete="new-password" aria-label="Repita a nova senha" invalid={!!pw2 && pw2 !== pw} wrapperClassName="w-full sm:w-[220px]" />
+                    <Button variant="primary" loading={busy === "senha"} disabled={pw.length < 8 || pw !== pw2} onClick={() => void savePassword()}>Trocar senha</Button>
+                  </div>
+                </Row>
+              )}
             </SettingsGroup>
             <SettingsGroup title="Aparência" description="Os dois temas compartilham a mesma hierarquia e os mesmos tokens semânticos.">
               <Row label="Tema" stack>

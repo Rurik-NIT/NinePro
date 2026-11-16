@@ -138,7 +138,7 @@ export function Sidebar({ collapsed, onToggleCollapsed, onNavigate, mobile }: { 
 
       <div className={cn("flex flex-col gap-0.5 border-t border-line py-3", collapsed ? "px-2" : "px-3")}>
         {consoleMode ? <Entry item={CONSOLE_SETTINGS} active={pathname === CONSOLE_SETTINGS.path} collapsed={collapsed} onClick={onNavigate} /> : <Entry item={SETTINGS_NAV} active={module?.id === "settings"} collapsed={collapsed} hasChildren onClick={onNavigate} />}
-        <Entry item={SYSTEM_NAV} active={leaf?.id === SYSTEM_NAV.id} collapsed={collapsed} onClick={onNavigate} />
+        {(!live || ws.isPlatformAdmin) && <Entry item={SYSTEM_NAV} active={leaf?.id === SYSTEM_NAV.id} collapsed={collapsed} onClick={onNavigate} />}
         <Menu>
           <MenuTrigger asChild>
             <button type="button" className={cn("mt-1 flex items-center gap-2.5 rounded-md p-1.5 text-left transition-colors hover:bg-surface-2", collapsed && "justify-center")} aria-label="Menu do usuário">

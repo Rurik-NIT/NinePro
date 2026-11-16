@@ -1,4 +1,5 @@
 import { lazy, Suspense, type ComponentType } from "react";
+import { DemoOnly } from "@/components/feedback/ComingSoon";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 import { ThemeProvider } from "@/lib/theme";
 import { FiltersProvider } from "@/lib/filters";
@@ -39,6 +40,11 @@ const biz = () => import("@/pages/misc/Business");
 const cons = () => import("@/pages/console/Console");
 const ConsoleTeam = lazy(() => import("@/pages/dev/Developers").then((m) => ({ default: () => <m.Members title="Equipe" /> })));
 
+function HomeRoute() {
+  const { mode } = useAuth();
+  return mode === "demo" ? N(biz, "Home") : <Navigate to="/anuncios" replace />;
+}
+
 const S = (el: JSX.Element) => <Suspense fallback={<LoadingState />}>{el}</Suspense>;
 const N = (loader: () => Promise<Record<string, unknown>>, key: string) => { const C = named(loader, key); return S(<C />); };
 const hidden = (title: string, description: string) => S(<Campaigns variant={{ title, description }} />);
@@ -48,25 +54,25 @@ const router = createBrowserRouter([
     path: "/",
     element: <RequireAuth><AppShell /></RequireAuth>,
     children: [
-      { index: true, element: N(biz, "Home") },
+      { index: true, element: <HomeRoute /> },
       { path: "conexoes", element: S(<Connections />) },
 
-      { path: "publicacoes", element: N(posts, "PostsAll") },
-      { path: "publicacoes/filas", element: N(posts, "PostsQueues") },
+      { path: "publicacoes", element: <DemoOnly title="Publicações" area="as redes sociais">{N(posts, "PostsAll")}</DemoOnly> },
+      { path: "publicacoes/filas", element: <DemoOnly title="Filas de publicação" area="as redes sociais">{N(posts, "PostsQueues")}</DemoOnly> },
       { path: "publicacoes/hashtags", element: <Navigate to="/conexoes" replace /> },
       { path: "ao-vivo", element: <Navigate to="/conexoes" replace /> },
 
-      { path: "analises/publicacoes", element: N(analytics, "AnalyticsPosting") },
-      { path: "analises/caixa-de-entrada", element: N(analytics, "AnalyticsInbox") },
-      { path: "analises/site", element: N(analytics, "AnalyticsWebsite") },
+      { path: "analises/publicacoes", element: <DemoOnly title="Análises de publicações" area="as redes sociais">{N(analytics, "AnalyticsPosting")}</DemoOnly> },
+      { path: "analises/caixa-de-entrada", element: <DemoOnly title="Análises da caixa de entrada" area="as redes sociais">{N(analytics, "AnalyticsInbox")}</DemoOnly> },
+      { path: "analises/site", element: <DemoOnly title="Análises do site" area="a tag do site">{N(analytics, "AnalyticsWebsite")}</DemoOnly> },
 
-      { path: "caixa-de-entrada/mensagens", element: N(inbox, "InboxMessages") },
-      { path: "caixa-de-entrada/comentarios", element: N(inbox, "InboxComments") },
-      { path: "caixa-de-entrada/avaliacoes", element: N(inbox, "InboxReviews") },
-      { path: "caixa-de-entrada/mencoes", element: N(inbox, "InboxMentions") },
-      { path: "caixa-de-entrada/campanhas", element: N(inbox, "InboxCampaigns") },
-      { path: "caixa-de-entrada/fluxos", element: N(inbox, "InboxWorkflows") },
-      { path: "caixa-de-entrada/contatos", element: N(inbox, "InboxContacts") },
+      { path: "caixa-de-entrada/mensagens", element: <DemoOnly title="Mensagens" area="as redes sociais">{N(inbox, "InboxMessages")}</DemoOnly> },
+      { path: "caixa-de-entrada/comentarios", element: <DemoOnly title="Comentários" area="as redes sociais">{N(inbox, "InboxComments")}</DemoOnly> },
+      { path: "caixa-de-entrada/avaliacoes", element: <DemoOnly title="Avaliações" area="as redes sociais">{N(inbox, "InboxReviews")}</DemoOnly> },
+      { path: "caixa-de-entrada/mencoes", element: <DemoOnly title="Menções" area="as redes sociais">{N(inbox, "InboxMentions")}</DemoOnly> },
+      { path: "caixa-de-entrada/campanhas", element: <DemoOnly title="Campanhas de mensagens" area="as redes sociais">{N(inbox, "InboxCampaigns")}</DemoOnly> },
+      { path: "caixa-de-entrada/fluxos", element: <DemoOnly title="Fluxos" area="as redes sociais">{N(inbox, "InboxWorkflows")}</DemoOnly> },
+      { path: "caixa-de-entrada/contatos", element: <DemoOnly title="Contatos" area="as redes sociais">{N(inbox, "InboxContacts")}</DemoOnly> },
 
       { path: "anuncios", element: S(<Dashboard />) },
       { path: "anuncios/campanhas", element: S(<Campaigns />) },
@@ -75,7 +81,7 @@ const router = createBrowserRouter([
       { path: "anuncios/conversoes", element: N(conv, "ConversionsOverview") },
       { path: "anuncios/conversoes/eventos", element: N(conv, "ConversionEvents") },
       { path: "anuncios/conversoes/destinos", element: N(conv, "ConversionDestinations") },
-      { path: "anuncios/conversoes/fontes", element: N(conv, "ConversionSources") },
+      { path: "anuncios/conversoes/fontes", element: <DemoOnly title="Fontes de conversão" area="a tag do site e as lojas">{N(conv, "ConversionSources")}</DemoOnly> },
       { path: "anuncios/publicos", element: N(assets, "Audiences") },
       { path: "anuncios/formularios", element: N(assets, "LeadForms") },
       { path: "anuncios/palavras-chave", element: hidden("Palavras-chave", "Palavras-chave das campanhas de pesquisa, com desempenho por termo.") },
@@ -89,51 +95,51 @@ const router = createBrowserRouter([
       { path: "automacoes/modelos", element: S(<Automations defaultTab="modelos" />) },
       { path: "automacoes/nova", element: S(<Builder />) },
 
-      { path: "comercio/produtos", element: N(biz, "CommerceProducts") },
-      { path: "comercio/colecoes", element: N(biz, "CommerceCollections") },
-      { path: "comercio/descontos", element: N(biz, "CommerceDiscounts") },
-      { path: "comercio/sincronizacao", element: N(biz, "CommerceSync") },
-      { path: "criadores", element: N(biz, "Creators") },
+      { path: "comercio/produtos", element: <DemoOnly title="Produtos" area="a sua loja">{N(biz, "CommerceProducts")}</DemoOnly> },
+      { path: "comercio/colecoes", element: <DemoOnly title="Coleções" area="a sua loja">{N(biz, "CommerceCollections")}</DemoOnly> },
+      { path: "comercio/descontos", element: <DemoOnly title="Descontos" area="a sua loja">{N(biz, "CommerceDiscounts")}</DemoOnly> },
+      { path: "comercio/sincronizacao", element: <DemoOnly title="Sincronização" area="a sua loja">{N(biz, "CommerceSync")}</DemoOnly> },
+      { path: "criadores", element: <DemoOnly title="Criadores" area="as redes sociais">{N(biz, "Creators")}</DemoOnly> },
 
-      { path: "whatsapp", element: N(msg, "WhatsAppOverview") },
-      { path: "whatsapp/modelos", element: N(msg, "WhatsAppTemplates") },
-      { path: "whatsapp/fluxos", element: N(msg, "WhatsAppFlows") },
-      { path: "whatsapp/grupos", element: N(msg, "WhatsAppGroups") },
-      { path: "whatsapp/conversoes", element: N(msg, "WhatsAppConversions") },
-      { path: "imessage", element: N(msg, "IMessageOverview") },
-      { path: "imessage/opt-in", element: N(msg, "IMessageOptIn") },
-      { path: "imessage/publico", element: N(msg, "IMessageAudience") },
+      { path: "whatsapp", element: <DemoOnly title="WhatsApp" area="o WhatsApp">{N(msg, "WhatsAppOverview")}</DemoOnly> },
+      { path: "whatsapp/modelos", element: <DemoOnly title="Modelos do WhatsApp" area="o WhatsApp">{N(msg, "WhatsAppTemplates")}</DemoOnly> },
+      { path: "whatsapp/fluxos", element: <DemoOnly title="Fluxos do WhatsApp" area="o WhatsApp">{N(msg, "WhatsAppFlows")}</DemoOnly> },
+      { path: "whatsapp/grupos", element: <DemoOnly title="Grupos do WhatsApp" area="o WhatsApp">{N(msg, "WhatsAppGroups")}</DemoOnly> },
+      { path: "whatsapp/conversoes", element: <DemoOnly title="Conversões do WhatsApp" area="o WhatsApp">{N(msg, "WhatsAppConversions")}</DemoOnly> },
+      { path: "imessage", element: <DemoOnly title="iMessage" area="o iMessage">{N(msg, "IMessageOverview")}</DemoOnly> },
+      { path: "imessage/opt-in", element: <DemoOnly title="Opt-in do iMessage" area="o iMessage">{N(msg, "IMessageOptIn")}</DemoOnly> },
+      { path: "imessage/publico", element: <DemoOnly title="Público do iMessage" area="o iMessage">{N(msg, "IMessageAudience")}</DemoOnly> },
 
-      { path: "telefonia", element: N(phone, "PhoneOverview") },
-      { path: "telefonia/chamadas", element: N(phone, "Calls") },
-      { path: "telefonia/sip", element: N(phone, "SipTrunks") },
-      { path: "telefonia/chamada-identificada", element: N(phone, "BrandedCalling") },
-      { path: "telefonia/10dlc", element: N(phone, "TenDlc") },
-      { path: "telefonia/ids-remetente", element: N(phone, "SenderIds") },
-      { path: "telefonia/rcs", element: N(phone, "Rcs") },
+      { path: "telefonia", element: <DemoOnly title="Telefonia" area="a telefonia">{N(phone, "PhoneOverview")}</DemoOnly> },
+      { path: "telefonia/chamadas", element: <DemoOnly title="Chamadas" area="a telefonia">{N(phone, "Calls")}</DemoOnly> },
+      { path: "telefonia/sip", element: <DemoOnly title="Troncos SIP" area="a telefonia">{N(phone, "SipTrunks")}</DemoOnly> },
+      { path: "telefonia/chamada-identificada", element: <DemoOnly title="Chamada identificada" area="a telefonia">{N(phone, "BrandedCalling")}</DemoOnly> },
+      { path: "telefonia/10dlc", element: <DemoOnly title="10DLC" area="a telefonia">{N(phone, "TenDlc")}</DemoOnly> },
+      { path: "telefonia/ids-remetente", element: <DemoOnly title="IDs de remetente" area="a telefonia">{N(phone, "SenderIds")}</DemoOnly> },
+      { path: "telefonia/rcs", element: <DemoOnly title="RCS" area="a telefonia">{N(phone, "Rcs")}</DemoOnly> },
 
       { path: "chaves-api", element: N(dev, "ApiKeys") },
-      { path: "usuarios", element: N(dev, "Members") },
+      { path: "usuarios", element: <DemoOnly title="Usuários" area="o convite de equipe">{N(dev, "Members")}</DemoOnly> },
       { path: "webhooks", element: N(dev, "Webhooks") },
-      { path: "logs", element: N(dev, "Logs") },
+      { path: "logs", element: <DemoOnly title="Logs" area="a API pública">{N(dev, "Logs")}</DemoOnly> },
 
-      { path: "uso", element: N(biz, "Usage") },
-      { path: "faturamento", element: N(biz, "Billing") },
+      { path: "uso", element: <DemoOnly title="Uso" area="o faturamento">{N(biz, "Usage")}</DemoOnly> },
+      { path: "faturamento", element: <DemoOnly title="Faturamento" area="o faturamento">{N(biz, "Billing")}</DemoOnly> },
       { path: "saldo", element: <Navigate to="/faturamento" replace /> },
       { path: "configuracoes", element: S(<Settings />) },
       { path: "design-system", element: S(<DesignSystem />) },
       { path: "admin", element: S(<Admin />) },
 
       /* Produto Console */
-      { path: "console", element: N(cons, "ConsolePlatforms") },
-      { path: "console/numeros", element: N(cons, "ConsoleNumbers") },
-      { path: "console/perfis", element: N(cons, "ConsoleProfiles") },
-      { path: "console/sessoes", element: N(cons, "ConsoleSessions") },
+      { path: "console", element: <DemoOnly title="Plataformas" area="a API pública">{N(cons, "ConsolePlatforms")}</DemoOnly> },
+      { path: "console/numeros", element: <DemoOnly title="Números" area="a telefonia">{N(cons, "ConsoleNumbers")}</DemoOnly> },
+      { path: "console/perfis", element: <DemoOnly title="Perfis" area="a API pública">{N(cons, "ConsoleProfiles")}</DemoOnly> },
+      { path: "console/sessoes", element: <DemoOnly title="Sessões" area="a API pública">{N(cons, "ConsoleSessions")}</DemoOnly> },
       { path: "console/webhooks", element: N(dev, "Webhooks") },
-      { path: "console/logs", element: N(dev, "Logs") },
+      { path: "console/logs", element: <DemoOnly title="Logs" area="a API pública">{N(dev, "Logs")}</DemoOnly> },
       { path: "console/chaves-api", element: N(dev, "ApiKeys") },
-      { path: "console/apps", element: N(cons, "ConsoleApps") },
-      { path: "console/equipe", element: S(<ConsoleTeam />) },
+      { path: "console/apps", element: <DemoOnly title="Apps" area="a API pública">{N(cons, "ConsoleApps")}</DemoOnly> },
+      { path: "console/equipe", element: <DemoOnly title="Equipe" area="o convite de equipe">{S(<ConsoleTeam />)}</DemoOnly> },
       { path: "console/configuracoes", element: S(<Settings />) },
 
       /* rotas antigas (etapa 1) → novas */
