@@ -24,7 +24,7 @@ import { CreateCampaignModal } from "./campaigns/CreateCampaignModal";
 /** Linha hierárquica: campanha → conjunto → anúncio, métricas proporcionais à participação. */
 interface Row { id: string; level: 0 | 1 | 2; name: string; sub?: string; status: DeliveryStatus; totals: Totals; campaign: Campaign; children?: Row[] }
 
-export default function Campaigns() {
+export default function Campaigns({ variant }: { variant?: { title: string; description: string } }) {
   const { range, activePlatforms } = useFilters();
   const toast = useToast();
   const [q, setQ] = useState("");
@@ -135,8 +135,8 @@ export default function Campaigns() {
     <Page>
       <PageHeader
         meta={<DemoBadge />}
-        title={<span className="inline-flex items-center gap-3">Campanhas <Count>{rows.length}</Count></span>}
-        description="Campanhas, conjuntos e anúncios em uma única tabela. Expanda uma linha para ver os níveis abaixo."
+        title={<span className="inline-flex items-center gap-3">{variant?.title ?? "Campanhas"} <Count>{rows.length}</Count></span>}
+        description={variant?.description ?? "Campanhas, conjuntos e anúncios em uma única tabela. Expanda uma linha para ver os níveis abaixo."}
         actions={<><GlobalFilters /><Button variant="primary" icon={<Plus />} onClick={() => setCreateOpen(true)}>Nova campanha</Button></>}
       />
 

@@ -3,7 +3,7 @@ import * as D from "@radix-ui/react-dialog";
 import { Monitor, Moon, Search, Sun } from "lucide-react";
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { ALL_NAV, groupOf } from "@/config/navigation";
+import { ALL_LEAVES, ALL_NAV } from "@/config/navigation";
 import { useTheme } from "@/lib/theme";
 import { Kbd } from "@/components/ui/Badge";
 
@@ -56,12 +56,12 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
             <Command.List className="max-h-[360px] overflow-y-auto p-2">
               <Command.Empty className="py-10 text-center t-secondary">Nada encontrado.</Command.Empty>
               <Command.Group heading="Páginas" className={group}>
-                {ALL_NAV.map((n) => (
-                  <Command.Item key={n.id} value={`${n.label} ${groupOf(n.id)?.label ?? ""}`} onSelect={() => run(() => navigate(n.path))} className={item}>
+                {ALL_LEAVES.map((n) => (
+                  <Command.Item key={n.id} value={`${n.label} ${n.module?.label ?? ""} ${n.id}`} onSelect={() => run(() => navigate(n.path))} className={item}>
                     <n.icon />
                     <span className="flex-1">{n.label}</span>
-                    <span className="t-caption">{groupOf(n.id)?.label ?? "Sistema"}</span>
-                    {n.shortcut && <span className="flex gap-1"><Kbd>G</Kbd><Kbd>{n.shortcut}</Kbd></span>}
+                    <span className="t-caption">{n.module?.label ?? ""}</span>
+                    {n.shortcut && !n.module && <span className="flex gap-1"><Kbd>G</Kbd><Kbd>{n.shortcut}</Kbd></span>}
                   </Command.Item>
                 ))}
               </Command.Group>

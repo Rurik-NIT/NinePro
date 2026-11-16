@@ -20,9 +20,9 @@ import { RuleSimulation } from "./automations/RuleSimulation";
 const CAT_ICON: Record<RuleCategory, ReactNode> = { cortar: <Scissors />, escalar: <TrendingUp />, alertar: <BellRing />, horario: <Clock3 /> };
 interface InstalledRule { id: string; templateId: string; name: string; target: string; active: boolean; createdAt: string }
 
-export default function Automations() {
+export default function Automations({ defaultTab = "regras" }: { defaultTab?: string }) {
   const toast = useToast();
-  const [tab, setTab] = useState("regras");
+  const [tab, setTab] = useState(defaultTab);
   const [rules, setRules] = useLocalState<InstalledRule[]>("ninepro.demo.rules", []);
   const [cat, setCat] = useState<RuleCategory | "todas">("todas");
   const [q, setQ] = useState("");

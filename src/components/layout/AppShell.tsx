@@ -5,7 +5,7 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import { cn } from "@/lib/cn";
 import { useTheme } from "@/lib/theme";
 import { useLocalState } from "@/lib/useLocalState";
-import { findNav, groupOf } from "@/config/navigation";
+import { findLeaf, findModule } from "@/config/navigation";
 import { IconButton } from "@/components/ui/Button";
 import { Kbd } from "@/components/ui/Badge";
 import { Tooltip } from "@/components/ui/Menu";
@@ -61,16 +61,20 @@ export function AppShell() {
 }
 
 function Header({ onOpenMenu, onOpenSearch }: { onOpenMenu: () => void; onOpenSearch: () => void }) {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const { theme, toggle } = useTheme();
-  const current = findNav(pathname);
-  const group = current ? groupOf(current.id) : undefined;
+  const current = findLeaf(pathname, search);
+  const module = findModule(pathname);
   return (
     <header className="sticky top-0 z-20 flex h-header shrink-0 items-center gap-2 border-b border-line bg-canvas px-3 lg:px-1">
       <IconButton label="Abrir menu" onClick={onOpenMenu} className="lg:hidden"><MenuIcon /></IconButton>
       <nav aria-label="Trilha" className="flex min-w-0 flex-1 items-center gap-2 text-body">
-        <Link to="/" className="hidden font-semibold text-text-dim hover:text-text sm:inline">{group?.label ?? "NinePro"}</Link>
-        <span className="hidden text-text-dim sm:inline" aria-hidden>/</span>
+        {module && module.id !== current?.id && (
+          <>
+            <Link to={module.path} className="hidden font-semibold text-text-dim hover:text-text sm:inline">{module.label}</Link>
+            <span className="hidden text-text-dim sm:inline" aria-hidden>/</span>
+          </>
+        )}
         <span className="truncate font-bold text-text" aria-current="page">{current?.label ?? "Página"}</span>
       </nav>
       <button
