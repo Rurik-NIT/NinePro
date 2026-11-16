@@ -1,0 +1,52 @@
+@import "@fontsource-variable/manrope/index.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "./tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    background: var(--canvas);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 20px;
+    font-weight: 500;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "ss01", "cv11";
+  }
+  *, ::before, ::after { border-color: var(--line); }
+  ::selection { background: var(--accent-line-strong); color: var(--text); }
+  :focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-sm); }
+  button { cursor: pointer; }
+  button:disabled { cursor: not-allowed; }
+  * { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+  @media (prefers-reduced-motion: reduce) {
+    *, ::before, ::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+  }
+}
+
+@layer components {
+  /* Números: sempre algarismos tabulares para colunas e indicadores */
+  .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum", "ss01"; }
+  /* Rótulo técnico: mono, caixa alta — cabeçalhos de tabela, labels de KPI, tags */
+  .t-label { font-family: var(--font-mono); font-size: 11px; line-height: 14px; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 500; color: var(--text-muted); }
+  .t-display { font-size: 24px; line-height: 30px; letter-spacing: -0.02em; font-weight: 700; }
+  .t-headline { font-size: 18px; line-height: 24px; letter-spacing: -0.01em; font-weight: 650; }
+  .t-title { font-size: 15px; line-height: 22px; letter-spacing: -0.005em; font-weight: 650; }
+  .t-body { font-size: 14px; line-height: 20px; font-weight: 500; }
+  .t-secondary { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--text-muted); }
+  .t-caption { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--text-dim); }
+
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow-card); }
+  .skeleton {
+    background: linear-gradient(90deg, var(--skeleton) 0, var(--skeleton-shine) 40%, var(--skeleton) 80%);
+    background-size: 800px 100%;
+    animation: shimmer 1.4s linear infinite;
+    border-radius: var(--radius-sm);
+  }
+}

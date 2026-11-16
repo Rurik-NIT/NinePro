@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="NinePro — gestão de tráfego pago e operação de campanhas." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>NinePro</title>
+    <script>
+      try {
+        var p = localStorage.getItem("ninepro.theme") || "dark";
+        var t = p === "system" ? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark") : p;
+        document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

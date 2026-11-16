@@ -1,0 +1,196 @@
+/*
+ * NinePro Design Tokens
+ * ---------------------------------------------------------------
+ * Camada 1 — Primitivos (rampas "Graphite" e "Volt"): nunca usados direto nas telas.
+ * Camada 2 — Semânticos (canvas, surface, text, accent, signal…): o que os componentes consomem.
+ * Cada semântico tem valor próprio por tema (escolhido, não invertido).
+ * Documentação: docs/design-system/02-color-tokens.md
+ */
+
+:root {
+  /* ---------- Primitivos: Graphite (neutro com viés verde-frio) ---------- */
+  --graphite-000: #0b0d0c;
+  --graphite-050: #121513;
+  --graphite-100: #171b19;
+  --graphite-150: #1a1f1c;
+  --graphite-200: #212724;
+  --graphite-250: #2b322e;
+  --graphite-300: #3a413e;
+  --graphite-400: #6b7470;
+  --graphite-500: #8a938f;
+  --graphite-700: #c3cac6;
+  --graphite-800: #e3e6e2;
+  --graphite-850: #edefec;
+  --graphite-900: #f3f4f1;
+  --graphite-950: #f8f9f7;
+
+  /* ---------- Primitivos: Volt (acento) ---------- */
+  --volt-500: #c8f04b;
+  --volt-600: #b3dc32;
+  --volt-700: #4a6600;
+  --volt-ink: #10140a;
+
+  /* ---------- Escala tipográfica ---------- */
+  --font-sans: "Manrope Variable", "Manrope", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  /* ---------- Espaçamento (base 4) ---------- */
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-1-5: 6px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ---------- Geometria ---------- */
+  --radius-xs: 4px;   /* checkbox, ticks, barras */
+  --radius-sm: 6px;   /* controles 28–32px, itens de menu */
+  --radius-md: 8px;   /* inputs, botões, nav items */
+  --radius-lg: 12px;  /* cards, painéis */
+  --radius-xl: 16px;  /* modais, drawers flutuantes */
+  --radius-pill: 999px;
+
+  --control-sm: 28px;
+  --control-md: 32px;
+  --control-lg: 40px;
+  --row-h: 44px;
+  --row-h-compact: 36px;
+  --header-h: 56px;
+  --sidebar-w: 248px;
+  --sidebar-w-collapsed: 64px;
+  --frame-gutter: 12px;
+  --content-max: 1600px;
+
+  /* ---------- Movimento ---------- */
+  --ease-enter: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 260ms;
+}
+
+/* =================================================================
+   TEMA ESCURO (principal)
+   Profundidade por níveis de superfície, não por sombra.
+   ================================================================= */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --canvas: var(--graphite-000);       /* fundo atrás de tudo */
+  --surface: var(--graphite-050);      /* sidebar, painéis, popovers */
+  --surface-2: var(--graphite-100);    /* linhas selecionadas, segmented */
+  --raised: var(--graphite-150);       /* cards dentro de painéis */
+  --soft: var(--graphite-200);         /* botões secundários, hover fill */
+  --overlay: #141816;                  /* menus, modais */
+  --scrim: rgba(4, 6, 5, 0.66);
+
+  --line: #232926;                     /* divisores e bordas de painel */
+  --line-soft: #1c211f;                /* regras internas de tabela */
+  --line-strong: var(--graphite-300);  /* checkbox, radio, dropzone */
+
+  --text: #eef2ef;
+  --text-soft: var(--graphite-700);
+  --text-muted: var(--graphite-500);
+  --text-dim: var(--graphite-400);
+  --text-inverse: var(--graphite-000);
+
+  --accent: var(--volt-500);           /* a próxima ação — uma por tela */
+  --accent-hover: #d4f56a;
+  --accent-ink: var(--volt-ink);       /* texto/ícone sobre o acento */
+  --accent-text: var(--volt-500);      /* acento usado como texto */
+  --accent-tint: rgba(200, 240, 75, 0.08);
+  --accent-line: rgba(200, 240, 75, 0.22);
+  --accent-line-strong: rgba(200, 240, 75, 0.42);
+
+  --positive: #4ade9a;
+  --positive-tint: rgba(74, 222, 154, 0.12);
+  --negative: #ff6b5e;
+  --negative-tint: rgba(255, 107, 94, 0.12);
+  --warning: #f5b544;
+  --warning-tint: rgba(245, 181, 68, 0.12);
+  --info: #5ab8f0;
+  --info-tint: rgba(90, 184, 240, 0.12);
+
+  --focus-ring: rgba(200, 240, 75, 0.55);
+  --shadow-pop: 0 12px 32px -12px rgba(0, 0, 0, 0.7), 0 0 0 1px var(--line);
+  --shadow-card: none;
+
+  /* Gráficos — validados (dataviz validate_palette, modo dark, surface #151917) */
+  --series-1: #3a87dd;
+  --series-2: #e0673a;
+  --series-3: #1fa886;
+  --series-4: #8670ec;
+  --series-5: #bb8710;
+  --series-6: #cd5690;
+  --chart-grid: #1f2522;
+  --chart-axis: var(--graphite-400);
+  --bar-idle: #262d29;
+  --skeleton: #1b201d;
+  --skeleton-shine: #232926;
+}
+
+/* =================================================================
+   TEMA CLARO — equivalente, não invertido
+   Canvas levemente acinzentado; superfícies brancas fazem a elevação.
+   ================================================================= */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --canvas: var(--graphite-900);
+  --surface: #ffffff;
+  --surface-2: var(--graphite-950);
+  --raised: #ffffff;
+  --soft: #eef0ec;
+  --overlay: #ffffff;
+  --scrim: rgba(18, 21, 19, 0.36);
+
+  --line: #e1e4df;
+  --line-soft: #eceee9;
+  --line-strong: #c9cfc9;
+
+  --text: #121513;
+  --text-soft: #3a413e;
+  --text-muted: #5e6763;
+  --text-dim: #858e89;
+  --text-inverse: #ffffff;
+
+  --accent: var(--volt-500);
+  --accent-hover: var(--volt-600);
+  --accent-ink: var(--volt-ink);
+  --accent-text: var(--volt-700);      /* escurecido para manter 6.5:1 no branco */
+  --accent-tint: rgba(150, 196, 18, 0.12);
+  --accent-line: rgba(110, 150, 0, 0.32);
+  --accent-line-strong: rgba(90, 125, 0, 0.6);
+
+  --positive: #17804f;
+  --positive-tint: rgba(23, 128, 79, 0.1);
+  --negative: #c93a27;
+  --negative-tint: rgba(201, 58, 39, 0.09);
+  --warning: #9a6510;
+  --warning-tint: rgba(196, 132, 20, 0.12);
+  --info: #1b6fae;
+  --info-tint: rgba(27, 111, 174, 0.09);
+
+  --focus-ring: rgba(90, 125, 0, 0.45);
+  --shadow-pop: 0 16px 36px -14px rgba(18, 21, 19, 0.22), 0 0 0 1px var(--line);
+  --shadow-card: 0 1px 2px rgba(18, 21, 19, 0.04);
+
+  /* Gráficos — validados (modo light, surface #FFFFFF) */
+  --series-1: #2f7fd8;
+  --series-2: #e5683b;
+  --series-3: #13a37e;
+  --series-4: #7a5af0;
+  --series-5: #c08708;
+  --series-6: #d6528e;
+  --chart-grid: #eef0ec;
+  --chart-axis: #858e89;
+  --bar-idle: #e7eae5;
+  --skeleton: #eef0ec;
+  --skeleton-shine: #f6f7f5;
+}
