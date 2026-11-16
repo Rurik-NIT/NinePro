@@ -28,7 +28,7 @@ function service(env: Env): SupabaseClient | null {
 }
 
 interface KeyAuth { ctx: ToolCtx; keyId: string; keyName: string }
-async function authenticate(req: Request, sb: SupabaseClient): Promise<KeyAuth | Response> {
+async function authenticate(req: Request, sb: SupabaseClient, env: Env): Promise<KeyAuth | Response> {
   const raw = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim() || (req.headers.get("x-api-key") ?? "").trim();
   if (!raw) return fail(401, "Envie a chave de API no cabeçalho Authorization: Bearer np_live_…");
   if (!/^np_live_[0-9a-f]{20,}$/.test(raw)) return fail(401, "Chave de API inválida.");
@@ -37,7 +37,7 @@ async function authenticate(req: Request, sb: SupabaseClient): Promise<KeyAuth |
   if (!data) return fail(401, "Chave de API inválida.");
   if (data.revoked_at) return fail(401, "Esta chave foi revogada.");
   await sb.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", data.id);
-  return { ctx: { sb, ws: data.workspace_id as string, canWrite: data.permission === "Leitura e escrita" }, keyId: data.id as string, keyName: data.name as string };
+  return { ctx: { sb, ws: data.workspace_id as string, canWrite: data.permission === "Leitura e escrita", env }, keyId: data.id as string, keyName: data.name as string };
 }
 
 async function logRequest(sb: SupabaseClient, ws: string, keyName: string, activity: string, status: number, started: number) {
@@ -94,7 +94,7 @@ export async function handleRest(req: Request, env: Env): Promise<Response> {
   const sb = service(env);
   if (!sb) return fail(503, "Servidor sem SUPABASE_SERVICE_ROLE_KEY configurada.");
   const started = Date.now();
-  const auth = await authenticate(req, sb);
+  const auth = await authenticate(req, sb, env);
   if (auth instanceof Response) return auth;
 
   let activity = `${req.method} /v1${path}`;
@@ -167,7 +167,7 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
   if (req.method !== "POST") return json(405, rpcErr(null, -32000, "Use POST (transporte Streamable HTTP, sem SSE)."), { allow: "POST" });
   const sb = service(env);
   if (!sb) return json(503, rpcErr(null, -32000, "Servidor sem SUPABASE_SERVICE_ROLE_KEY configurada."));
-  const auth = await authenticate(req, sb);
+  const auth = await authenticate(req, sb, env);
   if (auth instanceof Response) {
     const body = (await auth.json()) as { erro: string };
     return json(401, rpcErr(null, -32001, body.erro), { "www-authenticate": 'Bearer realm="NinePro"' });

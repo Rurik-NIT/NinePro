@@ -8,6 +8,8 @@ import { Tag } from "@/components/ui/Badge";
 import { Tooltip } from "@/components/ui/Menu";
 import { InlineNotice } from "@/components/feedback/States";
 import { PlatformDot } from "@/components/data/Platform";
+import { useAuth } from "@/lib/auth";
+import { MetaConnection } from "./connections/MetaConnection";
 
 const SCOPES: Record<PlatformId, string[]> = {
   meta: ["Campanhas", "Conjuntos", "Anúncios", "Leads", "Públicos"],
@@ -20,26 +22,32 @@ const SCOPES: Record<PlatformId, string[]> = {
  * Conexões — honestidade sobre o estado real: nenhuma integração existe nesta versão.
  * Os botões ficam desabilitados com explicação, em vez de simular OAuth.
  */
-function ConnectionsList({ onRedo }: { onRedo: () => void }) {
+function ConnectionsList({ onRedo }: { onRedo?: () => void }) {
+  const live = useAuth().mode === "supabase";
   return (
     <Page>
-      <PageHeader title="Conexões" description="Contas, números e fontes de conversão. Todo dado exibido no NinePro virá daqui." actions={<Button variant="ghost" onClick={onRedo}>Refazer configuração inicial</Button>} />
-      <InlineNotice tone="info" icon={<Lock />}>
-        Nesta versão nenhuma integração está ativa. O restante do app usa dados fictícios para validar o Design System.
-      </InlineNotice>
+      <PageHeader title="Conexões" description="Contas, números e fontes de conversão. Todo dado exibido no NinePro virá daqui." actions={onRedo ? <Button variant="ghost" onClick={onRedo}>Refazer configuração inicial</Button> : undefined} />
+      {!live && (
+        <InlineNotice tone="info" icon={<Lock />}>
+          Modo demonstração: nenhuma integração está ativa e o restante do app usa dados fictícios.
+        </InlineNotice>
+      )}
 
       <Section title="Plataformas de anúncio" description="Leitura de métricas e, quando permitido, controle de veiculação.">
         <ul className="grid grid-cols-1 gap-gutter md:grid-cols-2">
-          {PLATFORM_ORDER.map((p) => (
+          {live && <MetaConnection />}
+          {PLATFORM_ORDER.filter((p) => !(live && p === "meta")).map((p) => (
             <li key={p} className="panel flex flex-col gap-4 p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <span className="grid size-10 place-items-center rounded-md border border-line bg-surface-2"><PlatformDot id={p} className="size-3.5" /></span>
                   <div className="flex flex-col"><span className="t-title">{PLATFORMS[p].label}</span><span className="t-caption">Não conectada</span></div>
                 </div>
-                <Tooltip content="Disponível quando a integração for implementada">
-                  <span tabIndex={0}><Button size="sm" icon={<Cable />} disabled>Conectar</Button></span>
-                </Tooltip>
+                {live ? <Tag>Em breve</Tag> : (
+                  <Tooltip content="Disponível quando a integração for implementada">
+                    <span tabIndex={0}><Button size="sm" icon={<Cable />} disabled>Conectar</Button></span>
+                  </Tooltip>
+                )}
               </div>
               <div className="flex flex-col gap-2 border-t border-line-soft pt-3">
                 <span className="t-label !text-[10px]">Dados que serão lidos</span>
@@ -70,7 +78,9 @@ function ConnectionsList({ onRedo }: { onRedo: () => void }) {
 }
 
 export default function Connections() {
+  const live = useAuth().mode === "supabase";
   const read = () => { try { return !!JSON.parse(localStorage.getItem("ninepro.onboarding.v2") ?? "{}").done; } catch { return false; } };
   const [done, setDone] = useState(read);
+  if (live) return <ConnectionsList />;
   return done ? <ConnectionsList onRedo={() => { resetOnboarding(); setDone(false); }} /> : <ConnectionsOnboarding onFinish={() => setDone(true)} />;
 }

@@ -175,7 +175,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
       mode, loading, error, isEmpty: live && !loading && campaigns.length === 0,
       campaigns, leads, audiences, leadForms, convEvents, apiKeys, webhooks, automations, refresh,
       seedDemo: async () => { if (!live) return "Sem banco conectado."; const { error } = await sb!.rpc("seed_demo_workspace", { ws }); if (error) return error.message; await refresh(); return null; },
-      setCampaignStatus: async (ids, status) => (live ? run(() => sb!.from("campaigns").update({ status }).in("id", ids)) : null),
+      setCampaignStatus: async (ids, status) => {
+        if (!live) return null;
+        // Pelo servidor: além do banco, pausa/ativa na Meta quando a campanha veio de uma conta conectada.
+        const token = (await sb!.auth.getSession()).data.session?.access_token;
+        const res = await fetch("/api/connect", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify({ action: "set_status", workspaceId: ws, ids, status }) }).catch(() => null);
+        if (!res) return "Sem conexão com o servidor.";
+        const r = (await res.json().catch(() => ({}))) as { error?: string; results?: { erro?: string }[] };
+        await refresh();
+        return r.error ?? r.results?.find((x) => x.erro)?.erro ?? null;
+      },
       setLeadStatus: async (id, status) => (live ? run(() => sb!.from("leads").update({ status }).eq("id", id)) : null),
       createAudience: async (name, type) => (live ? run(() => sb!.from("audiences").insert({ workspace_id: ws, name, type, status: "Preenchendo" })) : null),
       createApiKey: async (name, permission) => {

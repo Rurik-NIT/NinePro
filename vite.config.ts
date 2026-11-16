@@ -7,6 +7,8 @@ import type { IncomingMessage } from "node:http";
 const API_ROUTES: { prefix: string; module: string; fn: string }[] = [
   { prefix: "/api/admin", module: "/server/admin.ts", fn: "handleAdmin" },
   { prefix: "/api/app", module: "/server/app.ts", fn: "handleApp" },
+  { prefix: "/api/connect", module: "/server/connections.ts", fn: "handleConnect" },
+  { prefix: "/api/sync", module: "/server/connections.ts", fn: "handleSync" },
   { prefix: "/api/mcp", module: "/server/agentApi.ts", fn: "handleMcp" },
   { prefix: "/api/v1", module: "/server/agentApi.ts", fn: "handleRest" },
 ];

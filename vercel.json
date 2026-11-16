@@ -44,5 +44,19 @@
         }
       ]
     }
+  ],
+  "functions": {
+    "api/connect.ts": {
+      "maxDuration": 300
+    },
+    "api/sync.ts": {
+      "maxDuration": 300
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/sync",
+      "schedule": "0 9 * * *"
+    }
   ]
 }

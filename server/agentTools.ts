@@ -4,8 +4,9 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dispatchEvent } from "./webhooks.js";
+import { applyCampaignStatus } from "./connections.js";
 
-export interface ToolCtx { sb: SupabaseClient; ws: string; canWrite: boolean }
+export interface ToolCtx { sb: SupabaseClient; ws: string; canWrite: boolean; env: Record<string, string | undefined> }
 type Json = Record<string, unknown>;
 type Schema = { type: "object"; properties: Record<string, Json>; required?: string[]; additionalProperties?: boolean };
 export interface Tool { name: string; title: string; description: string; write: boolean; input: Schema; run: (ctx: ToolCtx, args: Json) => Promise<unknown> }
@@ -132,17 +133,18 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "alterar_status_campanha", title: "Pausar ou ativar campanha", write: true,
-    description: "Pausa ou ativa uma campanha no NinePro e avisa os webhooks (campanha.status_alterado). Enquanto a conta de anúncios não estiver integrada, a plataforma de anúncios não é alterada.",
+    description: "Pausa ou ativa uma campanha. Se a campanha veio de uma conta da Meta conectada, a alteração é feita também na Meta. Avisa os webhooks (campanha.status_alterado).",
     input: { type: "object", properties: { campanha_id: { type: "string", format: "uuid" }, status: { type: "string", enum: ["active", "paused"] } }, required: ["campanha_id", "status"], additionalProperties: false },
     run: async (ctx, a) => {
       const id = needUuid(a.campanha_id, "campanha_id");
       const status = oneOf(a.status, ["active", "paused"], "status")!;
       const before = await q<{ status: string; name: string } | null>(ctx.sb.from("campaigns").select("status, name").eq("workspace_id", ctx.ws).eq("id", id).maybeSingle());
       if (!before) throw new ToolError(404, "Campanha não encontrada neste espaço.");
-      await q(ctx.sb.from("campaigns").update({ status, updated_at: new Date().toISOString() }).eq("workspace_id", ctx.ws).eq("id", id).select("id"));
-      const payload = { campanha_id: id, nome: before.name, status_anterior: before.status, status };
+      const [r] = await applyCampaignStatus(ctx.sb, ctx.env, ctx.ws, [id], status as "active" | "paused");
+      if (r?.erro) throw new ToolError(502, r.erro);
+      const payload = { campanha_id: id, nome: before.name, status_anterior: before.status, status, plataforma_alterada: !!r?.plataforma };
       if (before.status !== status) await dispatchEvent(ctx.sb, ctx.ws, "campanha.status_alterado", payload);
-      return { ...payload, plataforma_alterada: false, observacao: "Alterado no NinePro. A plataforma de anúncios é acionada quando a integração estiver ativa." };
+      return { ...payload, observacao: r?.plataforma ? "Alterado no NinePro e na plataforma de anúncios." : "Alterado no NinePro (campanha sem conta integrada)." };
     },
   },
   {
