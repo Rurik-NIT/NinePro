@@ -9,7 +9,7 @@ import { Tooltip } from "@/components/ui/Menu";
 import { InlineNotice } from "@/components/feedback/States";
 import { PlatformDot } from "@/components/data/Platform";
 import { useAuth } from "@/lib/auth";
-import { MetaConnection } from "./connections/MetaConnection";
+import { PlatformConnection } from "./connections/PlatformConnection";
 
 const SCOPES: Record<PlatformId, string[]> = {
   meta: ["Campanhas", "Conjuntos", "Anúncios", "Leads", "Públicos"],
@@ -35,8 +35,8 @@ function ConnectionsList({ onRedo }: { onRedo?: () => void }) {
 
       <Section title="Plataformas de anúncio" description="Leitura de métricas e, quando permitido, controle de veiculação.">
         <ul className="grid grid-cols-1 gap-gutter md:grid-cols-2">
-          {live && <MetaConnection />}
-          {PLATFORM_ORDER.filter((p) => !(live && p === "meta")).map((p) => (
+          {live && (["meta", "google", "tiktok", "linkedin"] as const).map((p) => <PlatformConnection key={p} platform={p} />)}
+          {PLATFORM_ORDER.filter((p) => !live || !["meta", "google", "tiktok", "linkedin"].includes(p)).map((p) => (
             <li key={p} className="panel flex flex-col gap-4 p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-3">

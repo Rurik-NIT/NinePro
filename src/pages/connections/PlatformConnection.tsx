@@ -12,7 +12,8 @@ import { ConfirmDialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
 import { InlineNotice } from "@/components/feedback/States";
 import { PlatformDot } from "@/components/data/Platform";
-import { ConnectMetaModal } from "./ConnectMetaModal";
+import { ConnectModal } from "./ConnectModal";
+import { PLATFORM_GUIDE, type PlatformKey } from "./platformGuides";
 
 interface Conn { id: string; auth_mode?: string; app_id?: string | null; external_user_name: string | null; status: "ativa" | "expirada" | "erro"; last_error: string | null; last_synced_at: string | null; token_expires_at: string | null; scopes: string[] }
 interface Acc { id: string; name: string; external_id: string; currency: string; status: string; sync_enabled: boolean; last_synced_at: string | null }
@@ -26,8 +27,9 @@ async function call<T>(body: Record<string, unknown>): Promise<T> {
   return r;
 }
 
-/** Cartão real da Meta Ads: conectar (OAuth), escolher contas, sincronizar e desconectar. */
-export function MetaConnection() {
+/** Cartão de uma plataforma de anúncios: conectar, escolher contas, sincronizar e desconectar. */
+export function PlatformConnection({ platform }: { platform: PlatformKey }) {
+  const guide = PLATFORM_GUIDE[platform];
   const { current } = useWorkspace();
   const data = useData();
   const toast = useToast();
@@ -45,21 +47,21 @@ export function MetaConnection() {
   const load = useCallback(async () => {
     if (!supabase || !ws) return;
     const [c, a, r] = await Promise.all([
-      supabase.from("platform_connections").select("id, auth_mode, app_id, external_user_name, status, last_error, last_synced_at, token_expires_at, scopes").eq("workspace_id", ws).eq("platform", "meta").maybeSingle(),
-      supabase.from("ad_accounts").select("id, name, external_id, currency, status, sync_enabled, last_synced_at").eq("workspace_id", ws).eq("platform", "meta").order("name"),
-      supabase.from("sync_runs").select("status, detail, error, started_at, finished_at").eq("workspace_id", ws).eq("platform", "meta").order("started_at", { ascending: false }).limit(1).maybeSingle(),
+      supabase.from("platform_connections").select("id, auth_mode, app_id, external_user_name, status, last_error, last_synced_at, token_expires_at, scopes").eq("workspace_id", ws).eq("platform", platform).maybeSingle(),
+      supabase.from("ad_accounts").select("id, name, external_id, currency, status, sync_enabled, last_synced_at").eq("workspace_id", ws).eq("platform", platform).order("name"),
+      supabase.from("sync_runs").select("status, detail, error, started_at, finished_at").eq("workspace_id", ws).eq("platform", platform).order("started_at", { ascending: false }).limit(1).maybeSingle(),
     ]);
     setConn((c.data as Conn | null) ?? null);
     setAccounts((a.data as Acc[] | null) ?? []);
     setLastRun((r.data as Run | null) ?? null);
-  }, [ws]);
+  }, [ws, platform]);
   useEffect(() => { void load(); }, [load]);
 
   const sync = useCallback(async (days = 30) => {
     if (!ws) return;
     setBusy("sync");
     try {
-      const r = await call<{ ok: boolean; detail: Record<string, number>; error?: string }>({ action: "sync", workspaceId: ws, days });
+      const r = await call<{ ok: boolean; detail: Record<string, number>; error?: string }>({ action: "sync", workspaceId: ws, platform, days });
       toast({ tone: "success", title: "Sincronização concluída", description: `${r.detail.campanhas} campanhas, ${r.detail.anuncios} anúncios e ${r.detail.linhas_de_metricas} linhas de métricas (${r.detail.dias} dias).` });
       await data.refresh();
     } catch (e) {
@@ -68,33 +70,34 @@ export function MetaConnection() {
       setBusy(null);
       await load();
     }
-  }, [ws, toast, data, load]);
+  }, [ws, platform, toast, data, load]);
 
-  // Volta do OAuth: ?meta=conectado|erro|cancelado
+  // Volta do OAuth: ?plataforma=<id>&resultado=conectado|erro|cancelado
   useEffect(() => {
-    const m = params.get("meta");
-    if (!m || handled.current || !ws) return;
+    const p = params.get("plataforma") ?? (params.get("meta") ? "meta" : null);
+    const r = params.get("resultado") ?? params.get("meta");
+    if (p !== platform || !r || handled.current || !ws) return;
     handled.current = true;
     const motivo = params.get("motivo");
     setParams({}, { replace: true });
-    if (m === "conectado") { toast({ tone: "success", title: "Meta conectada", description: "Buscando contas, campanhas e métricas dos últimos 30 dias…" }); void sync(30); }
-    else if (m === "cancelado") toast({ tone: "info", title: "Conexão cancelada" });
-    else toast({ tone: "error", title: "Não foi possível conectar a Meta", description: motivo ?? undefined });
-  }, [params, setParams, ws, toast, sync]);
+    if (r === "conectado") { toast({ tone: "success", title: `${guide.label} conectado`, description: "Buscando contas, campanhas e métricas dos últimos 30 dias…" }); void sync(30); }
+    else if (r === "cancelado") toast({ tone: "info", title: "Conexão cancelada" });
+    else toast({ tone: "error", title: `Não foi possível conectar ${guide.label}`, description: motivo ?? undefined });
+  }, [params, setParams, ws, toast, sync, platform, guide.label]);
 
   const connect = () => setConnecting(true);
 
   const statusBadge = !conn ? <span className="t-caption">Não conectada</span>
-    : conn.status === "ativa" ? <span className="flex flex-wrap items-center gap-2"><StatusBadge tone="positive">Conectada{conn.external_user_name ? ` como ${conn.external_user_name}` : ""}</StatusBadge><Tag>{conn.auth_mode === "token" ? "Token de acesso" : conn.auth_mode === "app_proprio" ? `App da empresa${conn.app_id ? ` · ${conn.app_id}` : ""}` : "Login do Facebook"}</Tag></span>
+    : conn.status === "ativa" ? <span className="flex flex-wrap items-center gap-2"><StatusBadge tone="positive">Conectada{conn.external_user_name ? ` como ${conn.external_user_name}` : ""}</StatusBadge><Tag>{conn.auth_mode === "token" ? "Token de acesso" : conn.auth_mode === "app_proprio" ? `App da empresa${conn.app_id ? ` · ${conn.app_id.slice(0, 24)}` : ""}` : guide.loginLabel}</Tag></span>
     : conn.status === "expirada" ? <StatusBadge tone="warning">Autorização expirada</StatusBadge>
     : <StatusBadge tone="negative">Erro na última sincronização</StatusBadge>;
 
   return (
-    <li className="panel flex flex-col gap-4 p-4 md:col-span-2">
+    <li className="panel flex flex-col gap-4 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-center gap-3">
-          <span className="grid size-10 place-items-center rounded-md border border-line bg-surface-2"><PlatformDot id="meta" className="size-3.5" /></span>
-          <div className="flex flex-col gap-0.5"><span className="t-title">Meta Ads</span>{conn === undefined ? <span className="t-caption">Carregando…</span> : statusBadge}</div>
+          <span className="grid size-10 place-items-center rounded-md border border-line bg-surface-2"><PlatformDot id={platform} className="size-3.5" /></span>
+          <div className="flex flex-col gap-0.5"><span className="t-title">{guide.label}</span>{conn === undefined ? <span className="t-caption">Carregando…</span> : statusBadge}</div>
         </div>
         <div className="flex flex-wrap gap-2">
           {conn && conn.status !== "expirada" && <Button size="sm" icon={<RefreshCw className={busy === "sync" ? "animate-spin" : ""} />} disabled={!!busy} onClick={() => void sync(30)}>{busy === "sync" ? "Sincronizando…" : "Sincronizar agora"}</Button>}
@@ -103,7 +106,7 @@ export function MetaConnection() {
         </div>
       </div>
 
-      {!admin && !conn && <InlineNotice tone="info">Peça a um administrador do espaço para conectar a conta da Meta.</InlineNotice>}
+      {!admin && !conn && <InlineNotice tone="info">Peça a um administrador do espaço para conectar esta plataforma.</InlineNotice>}
       {conn?.last_error && <InlineNotice tone={conn.status === "expirada" ? "warning" : "negative"}>{conn.last_error}</InlineNotice>}
 
       {conn && (
@@ -124,15 +127,15 @@ export function MetaConnection() {
               ))}
             </ul>
           )}
-          <span className="t-caption">Pausar ou ativar uma campanha no NinePro (ou por um agente) altera também na Meta.</span>
+          <span className="t-caption">Pausar ou ativar uma campanha no NinePro (ou por um agente) altera também em {guide.label}.</span>
         </div>
       )}
 
-      {ws && <ConnectMetaModal open={connecting} onOpenChange={setConnecting} ws={ws} call={call} onConnected={() => { void load().then(() => sync(30)); }} />}
+      {ws && <ConnectModal platform={platform} open={connecting} onOpenChange={setConnecting} ws={ws} call={call} onConnected={() => { void load().then(() => sync(30)); }} />}
 
-      <ConfirmDialog open={confirmOff} onOpenChange={setConfirmOff} title="Desconectar a Meta?" confirmLabel="Desconectar"
-        description="O NinePro para de sincronizar e de alterar campanhas na Meta. As campanhas e métricas já importadas continuam no histórico."
-        onConfirm={async () => { try { await call({ action: "disconnect", workspaceId: ws, platform: "meta" }); toast({ tone: "info", title: "Meta desconectada" }); await load(); } catch (e) { toast({ tone: "error", title: "Não foi possível desconectar", description: e instanceof Error ? e.message : String(e) }); } }} />
+      <ConfirmDialog open={confirmOff} onOpenChange={setConfirmOff} title={`Desconectar ${guide.label}?`} confirmLabel="Desconectar"
+        description={`O NinePro para de sincronizar e de alterar campanhas em ${guide.label}. As campanhas e métricas já importadas continuam no histórico.`}
+        onConfirm={async () => { try { await call({ action: "disconnect", workspaceId: ws, platform }); toast({ tone: "info", title: `${guide.label} desconectado` }); await load(); } catch (e) { toast({ tone: "error", title: "Não foi possível desconectar", description: e instanceof Error ? e.message : String(e) }); } }} />
     </li>
   );
 }
