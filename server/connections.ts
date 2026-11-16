@@ -8,8 +8,28 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { decryptToken, encryptToken, signState, verifyState } from "./crypto.js";
 import {
   MetaError, mapInsight, mapObjective, mapStatus, metaAccounts, metaAdSets, metaAds, metaAuthorizeUrl, metaCampaigns,
-  metaConfigured, metaExchangeCode, metaInsights, metaSetStatus,
+  metaConfigured, metaExchangeCode, metaInsights, metaInspectToken, metaSetStatus, ninePROApp, META_DEFAULT_SCOPES, type MetaApp,
 } from "./platforms/meta.js";
+
+type AuthMode = "app_ninepro" | "app_proprio" | "token";
+const FRIENDLY = "Não foi possível conectar agora. Tente de novo em alguns minutos.";
+
+async function saveConnection(sb: SupabaseClient, env: Env, c: { ws: string; uid: string; mode: AuthMode; appId?: string | null; token: string; expiresAt: string | null; user: { id: string; name: string }; scopes: string[] }) {
+  const { data: conn, error } = await sb.from("platform_connections").upsert({
+    workspace_id: c.ws, platform: "meta", external_user_id: c.user.id, external_user_name: c.user.name, scopes: c.scopes, auth_mode: c.mode, app_id: c.appId ?? null,
+    status: "ativa", last_error: null, token_expires_at: c.expiresAt, connected_by: c.uid, updated_at: new Date().toISOString(),
+  }, { onConflict: "workspace_id,platform" }).select("id").single();
+  if (error || !conn) throw new Error(error?.message ?? "Não foi possível salvar a conexão.");
+  const { error: tErr } = await sb.from("platform_tokens").upsert({ connection_id: conn.id, access_token_enc: await encryptToken(env, c.token), updated_at: new Date().toISOString() });
+  if (tErr) throw new Error(tErr.message);
+  return conn.id as string;
+}
+
+async function ownApp(sb: SupabaseClient, env: Env, ws: string): Promise<MetaApp> {
+  const { data } = await sb.from("platform_app_credentials").select("app_id, app_secret_enc").eq("workspace_id", ws).eq("platform", "meta").maybeSingle();
+  if (!data) throw new Error("As credenciais do seu app da Meta não foram encontradas. Informe de novo.");
+  return { appId: data.app_id as string, appSecret: await decryptToken(env, data.app_secret_enc as string) };
+}
 
 type Env = Record<string, string | undefined>;
 type Json = Record<string, unknown>;
@@ -153,17 +173,13 @@ export async function handleConnect(req: Request, env: Env): Promise<Response> {
     const state = url.searchParams.get("state");
     if (!sb || !code || !state) return back("meta=erro&motivo=" + encodeURIComponent("Retorno incompleto da Meta."));
     try {
-      const st = await verifyState<{ ws: string; uid: string; p: string }>(env, state);
+      const st = await verifyState<{ ws: string; uid: string; p: string; mode?: AuthMode }>(env, state);
       const role = await roleIn(sb, st.ws, st.uid);
       if (!role || !["owner", "admin"].includes(role)) throw new Error("Só administradores do espaço podem conectar contas.");
-      const ex = await metaExchangeCode(env, code, redirectUri(req, env));
-      const { data: conn, error } = await sb.from("platform_connections").upsert({
-        workspace_id: st.ws, platform: "meta", external_user_id: ex.user.id, external_user_name: ex.user.name, scopes: ex.scopes,
-        status: "ativa", last_error: null, token_expires_at: ex.expiresAt, connected_by: st.uid, updated_at: new Date().toISOString(),
-      }, { onConflict: "workspace_id,platform" }).select("id").single();
-      if (error || !conn) throw new Error(error?.message ?? "Não foi possível salvar a conexão.");
-      const { error: tErr } = await sb.from("platform_tokens").upsert({ connection_id: conn.id, access_token_enc: await encryptToken(env, ex.token), updated_at: new Date().toISOString() });
-      if (tErr) throw new Error(tErr.message);
+      const mode: AuthMode = st.mode === "app_proprio" ? "app_proprio" : "app_ninepro";
+      const app = mode === "app_proprio" ? await ownApp(sb, env, st.ws) : ninePROApp(env);
+      const ex = await metaExchangeCode(env, app, code, redirectUri(req, env));
+      await saveConnection(sb, env, { ws: st.ws, uid: st.uid, mode, appId: mode === "app_proprio" ? app.appId : null, token: ex.token, expiresAt: ex.expiresAt, user: ex.user, scopes: ex.scopes });
       return back("meta=conectado");
     } catch (e) {
       return back("meta=erro&motivo=" + encodeURIComponent(e instanceof Error ? e.message : String(e)));
@@ -181,16 +197,53 @@ export async function handleConnect(req: Request, env: Env): Promise<Response> {
   const isAdmin = ["owner", "admin"].includes(role);
 
   switch (body.action) {
+    case "options": {
+      // O que a tela pode oferecer, sem expor detalhes do servidor
+      const { data: own } = await sb.from("platform_app_credentials").select("app_id").eq("workspace_id", ws).eq("platform", "meta").maybeSingle();
+      return json(200, { ninepro: metaConfigured(env), redirectUri: redirectUri(req, env), scopes: (env.META_SCOPES || META_DEFAULT_SCOPES).split(","), ownAppId: (own?.app_id as string | undefined) ?? null });
+    }
     case "start": {
       if (!isAdmin) return json(403, { error: "Só administradores do espaço podem conectar contas." });
       if (body.platform !== "meta") return json(400, { error: "Plataforma ainda não suportada." });
-      if (!metaConfigured(env) || !env.TOKEN_ENCRYPTION_KEY) return json(503, { error: "A integração com a Meta ainda não foi configurada no servidor (META_APP_ID, META_APP_SECRET e TOKEN_ENCRYPTION_KEY)." });
-      const state = await signState(env, { ws, uid: user.id, p: "meta" });
-      return json(200, { url: metaAuthorizeUrl(env, redirectUri(req, env), state) });
+      if (!env.TOKEN_ENCRYPTION_KEY) { console.error("TOKEN_ENCRYPTION_KEY ausente"); return json(503, { error: FRIENDLY }); }
+      const mode: AuthMode = body.mode === "app_proprio" ? "app_proprio" : "app_ninepro";
+      let app: MetaApp;
+      if (mode === "app_proprio") {
+        const appId = String(body.appId ?? "").trim();
+        const appSecret = String(body.appSecret ?? "").trim();
+        if (!/^\d{5,20}$/.test(appId)) return json(400, { error: "O ID do app tem só números (veja em Configurações do app › Básico)." });
+        if (appSecret) {
+          if (!/^[0-9a-f]{32}$/i.test(appSecret)) return json(400, { error: "A chave secreta do app tem 32 caracteres (letras de a a f e números)." });
+          await sb.from("platform_app_credentials").upsert({ workspace_id: ws, platform: "meta", app_id: appId, app_secret_enc: await encryptToken(env, appSecret), updated_at: new Date().toISOString() });
+        }
+        try { app = await ownApp(sb, env, ws); } catch (e) { return json(400, { error: e instanceof Error ? e.message : String(e) }); }
+        if (app.appId !== appId) return json(400, { error: "Informe a chave secreta do app para trocar o ID do app." });
+      } else {
+        if (!metaConfigured(env)) return json(409, { error: "Use o app da sua empresa ou um token de acesso para conectar." });
+        app = ninePROApp(env);
+      }
+      const state = await signState(env, { ws, uid: user.id, p: "meta", mode });
+      return json(200, { url: metaAuthorizeUrl(env, app, redirectUri(req, env), state) });
+    }
+    case "connect_token": {
+      if (!isAdmin) return json(403, { error: "Só administradores do espaço podem conectar contas." });
+      if (!env.TOKEN_ENCRYPTION_KEY) { console.error("TOKEN_ENCRYPTION_KEY ausente"); return json(503, { error: FRIENDLY }); }
+      const token = String(body.token ?? "").trim();
+      if (token.length < 50 || /\s/.test(token)) return json(400, { error: "Cole o token completo, sem espaços." });
+      try {
+        const info = await metaInspectToken(env, token);
+        const missing = ["ads_read"].filter((p) => info.scopes.length && !info.scopes.includes(p));
+        if (missing.length) return json(400, { error: `O token não tem a permissão ${missing.join(", ")}. Gere de novo marcando ads_read e ads_management.` });
+        await saveConnection(sb, env, { ws, uid: user.id, mode: "token", token, expiresAt: null, user: info.user, scopes: info.scopes });
+        return json(200, { ok: true, user: info.user.name });
+      } catch (e) {
+        return json(400, { error: e instanceof MetaError ? (e.expired ? "Este token é inválido ou expirou." : e.message) : FRIENDLY });
+      }
     }
     case "disconnect": {
       if (!isAdmin) return json(403, { error: "Só administradores do espaço podem desconectar." });
       await sb.from("platform_connections").delete().eq("workspace_id", ws).eq("platform", String(body.platform ?? "meta"));
+      if (body.forgetApp === true) await sb.from("platform_app_credentials").delete().eq("workspace_id", ws).eq("platform", String(body.platform ?? "meta"));
       return json(200, { ok: true });
     }
     case "sync": {

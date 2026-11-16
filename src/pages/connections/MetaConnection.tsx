@@ -12,8 +12,9 @@ import { ConfirmDialog } from "@/components/ui/Dialog";
 import { useToast } from "@/components/ui/Toast";
 import { InlineNotice } from "@/components/feedback/States";
 import { PlatformDot } from "@/components/data/Platform";
+import { ConnectMetaModal } from "./ConnectMetaModal";
 
-interface Conn { id: string; external_user_name: string | null; status: "ativa" | "expirada" | "erro"; last_error: string | null; last_synced_at: string | null; token_expires_at: string | null; scopes: string[] }
+interface Conn { id: string; auth_mode?: string; app_id?: string | null; external_user_name: string | null; status: "ativa" | "expirada" | "erro"; last_error: string | null; last_synced_at: string | null; token_expires_at: string | null; scopes: string[] }
 interface Acc { id: string; name: string; external_id: string; currency: string; status: string; sync_enabled: boolean; last_synced_at: string | null }
 interface Run { status: string; detail: Record<string, number>; error: string | null; started_at: string; finished_at: string | null }
 
@@ -38,12 +39,13 @@ export function MetaConnection() {
   const [lastRun, setLastRun] = useState<Run | null>(null);
   const [busy, setBusy] = useState<"connect" | "sync" | null>(null);
   const [confirmOff, setConfirmOff] = useState(false);
+  const [connecting, setConnecting] = useState(false);
   const handled = useRef(false);
 
   const load = useCallback(async () => {
     if (!supabase || !ws) return;
     const [c, a, r] = await Promise.all([
-      supabase.from("platform_connections").select("id, external_user_name, status, last_error, last_synced_at, token_expires_at, scopes").eq("workspace_id", ws).eq("platform", "meta").maybeSingle(),
+      supabase.from("platform_connections").select("id, auth_mode, app_id, external_user_name, status, last_error, last_synced_at, token_expires_at, scopes").eq("workspace_id", ws).eq("platform", "meta").maybeSingle(),
       supabase.from("ad_accounts").select("id, name, external_id, currency, status, sync_enabled, last_synced_at").eq("workspace_id", ws).eq("platform", "meta").order("name"),
       supabase.from("sync_runs").select("status, detail, error, started_at, finished_at").eq("workspace_id", ws).eq("platform", "meta").order("started_at", { ascending: false }).limit(1).maybeSingle(),
     ]);
@@ -80,20 +82,10 @@ export function MetaConnection() {
     else toast({ tone: "error", title: "Não foi possível conectar a Meta", description: motivo ?? undefined });
   }, [params, setParams, ws, toast, sync]);
 
-  const connect = async () => {
-    if (!ws) return;
-    setBusy("connect");
-    try {
-      const { url } = await call<{ url: string }>({ action: "start", workspaceId: ws, platform: "meta" });
-      window.location.href = url;
-    } catch (e) {
-      toast({ tone: "error", title: "Não foi possível iniciar a conexão", description: e instanceof Error ? e.message : String(e) });
-      setBusy(null);
-    }
-  };
+  const connect = () => setConnecting(true);
 
   const statusBadge = !conn ? <span className="t-caption">Não conectada</span>
-    : conn.status === "ativa" ? <StatusBadge tone="positive">Conectada{conn.external_user_name ? ` como ${conn.external_user_name}` : ""}</StatusBadge>
+    : conn.status === "ativa" ? <span className="flex flex-wrap items-center gap-2"><StatusBadge tone="positive">Conectada{conn.external_user_name ? ` como ${conn.external_user_name}` : ""}</StatusBadge><Tag>{conn.auth_mode === "token" ? "Token de acesso" : conn.auth_mode === "app_proprio" ? `App da empresa${conn.app_id ? ` · ${conn.app_id}` : ""}` : "Login do Facebook"}</Tag></span>
     : conn.status === "expirada" ? <StatusBadge tone="warning">Autorização expirada</StatusBadge>
     : <StatusBadge tone="negative">Erro na última sincronização</StatusBadge>;
 
@@ -106,7 +98,7 @@ export function MetaConnection() {
         </div>
         <div className="flex flex-wrap gap-2">
           {conn && conn.status !== "expirada" && <Button size="sm" icon={<RefreshCw className={busy === "sync" ? "animate-spin" : ""} />} disabled={!!busy} onClick={() => void sync(30)}>{busy === "sync" ? "Sincronizando…" : "Sincronizar agora"}</Button>}
-          {admin && (!conn || conn.status === "expirada") && <Button size="sm" variant="primary" icon={<Cable />} loading={busy === "connect"} disabled={!!busy} onClick={() => void connect()}>{conn ? "Reconectar" : "Conectar com Facebook"}</Button>}
+          {admin && (!conn || conn.status !== "ativa") && <Button size="sm" variant="primary" icon={<Cable />} disabled={!!busy} onClick={connect}>{conn ? "Reconectar" : "Conectar"}</Button>}
           {admin && conn && <Button size="sm" variant="ghost" icon={<Unplug />} disabled={!!busy} onClick={() => setConfirmOff(true)}>Desconectar</Button>}
         </div>
       </div>
@@ -135,6 +127,8 @@ export function MetaConnection() {
           <span className="t-caption">Pausar ou ativar uma campanha no NinePro (ou por um agente) altera também na Meta.</span>
         </div>
       )}
+
+      {ws && <ConnectMetaModal open={connecting} onOpenChange={setConnecting} ws={ws} call={call} onConnected={() => { void load().then(() => sync(30)); }} />}
 
       <ConfirmDialog open={confirmOff} onOpenChange={setConfirmOff} title="Desconectar a Meta?" confirmLabel="Desconectar"
         description="O NinePro para de sincronizar e de alterar campanhas na Meta. As campanhas e métricas já importadas continuam no histórico."

@@ -13,11 +13,14 @@ export class MetaError extends Error {
   constructor(message: string, public code?: number, public expired = false) { super(message); }
 }
 
+/** App usado no OAuth: o do NinePro (variáveis de ambiente) ou o app próprio do cliente. */
+export interface MetaApp { appId: string; appSecret: string }
 export function metaConfigured(env: Env) { return !!(env.META_APP_ID && env.META_APP_SECRET); }
+export const ninePROApp = (env: Env): MetaApp => ({ appId: env.META_APP_ID!, appSecret: env.META_APP_SECRET! });
 
-export function metaAuthorizeUrl(env: Env, redirectUri: string, state: string) {
+export function metaAuthorizeUrl(env: Env, app: MetaApp, redirectUri: string, state: string) {
   const u = new URL(`https://www.facebook.com/${metaVersion(env)}/dialog/oauth`);
-  u.searchParams.set("client_id", env.META_APP_ID!);
+  u.searchParams.set("client_id", app.appId);
   u.searchParams.set("redirect_uri", redirectUri);
   u.searchParams.set("state", state);
   u.searchParams.set("scope", env.META_SCOPES || META_DEFAULT_SCOPES);
@@ -37,18 +40,20 @@ async function call<T = Json>(url: string, init?: RequestInit): Promise<T> {
 }
 
 /** Troca o code do OAuth por um token de longa duração (~60 dias). */
-export async function metaExchangeCode(env: Env, code: string, redirectUri: string) {
+export async function metaExchangeCode(env: Env, app: MetaApp, code: string, redirectUri: string) {
   const g = graph(env);
-  const short = await call<{ access_token: string }>(`${g}/oauth/access_token?${new URLSearchParams({ client_id: env.META_APP_ID!, client_secret: env.META_APP_SECRET!, redirect_uri: redirectUri, code })}`);
-  const long = await call<{ access_token: string; expires_in?: number }>(`${g}/oauth/access_token?${new URLSearchParams({ grant_type: "fb_exchange_token", client_id: env.META_APP_ID!, client_secret: env.META_APP_SECRET!, fb_exchange_token: short.access_token })}`);
-  const me = await call<{ id: string; name: string }>(`${g}/me?${new URLSearchParams({ fields: "id,name", access_token: long.access_token })}`);
-  const perms = await call<{ data: { permission: string; status: string }[] }>(`${g}/me/permissions?${new URLSearchParams({ access_token: long.access_token })}`);
-  return {
-    token: long.access_token,
-    expiresAt: long.expires_in ? new Date(Date.now() + long.expires_in * 1000).toISOString() : null,
-    user: me,
-    scopes: perms.data.filter((p) => p.status === "granted").map((p) => p.permission),
-  };
+  const short = await call<{ access_token: string }>(`${g}/oauth/access_token?${new URLSearchParams({ client_id: app.appId, client_secret: app.appSecret, redirect_uri: redirectUri, code })}`);
+  const long = await call<{ access_token: string; expires_in?: number }>(`${g}/oauth/access_token?${new URLSearchParams({ grant_type: "fb_exchange_token", client_id: app.appId, client_secret: app.appSecret, fb_exchange_token: short.access_token })}`);
+  const info = await metaInspectToken(env, long.access_token);
+  return { token: long.access_token, expiresAt: long.expires_in ? new Date(Date.now() + long.expires_in * 1000).toISOString() : null, ...info };
+}
+
+/** Confere um token (do OAuth ou colado pelo cliente): quem é e quais permissões tem. */
+export async function metaInspectToken(env: Env, token: string) {
+  const g = graph(env);
+  const me = await call<{ id: string; name: string }>(`${g}/me?${new URLSearchParams({ fields: "id,name", access_token: token })}`);
+  const perms = await call<{ data: { permission: string; status: string }[] }>(`${g}/me/permissions?${new URLSearchParams({ access_token: token })}`).catch(() => ({ data: [] as { permission: string; status: string }[] }));
+  return { user: me, scopes: perms.data.filter((p) => p.status === "granted").map((p) => p.permission) };
 }
 
 /** Percorre a paginação da Graph API. */
