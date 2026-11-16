@@ -6,6 +6,7 @@ import { Field, Input } from "@/components/ui/Input";
 import { SegmentedControl } from "@/components/ui/Tabs";
 import { InlineNotice } from "@/components/feedback/States";
 import { Logo } from "@/components/layout/Logo";
+import { Link } from "react-router-dom";
 
 const ALLOW_SIGNUP = import.meta.env.VITE_ALLOW_SIGNUP === "true";
 
@@ -64,6 +65,7 @@ export default function Login() {
             {mode === "recuperar" ? "Voltar para o login" : "Esqueci minha senha"}
           </button>
         </form>
+        <p className="text-center t-caption">Ao entrar, você concorda com os <Link to="/termos" className="underline hover:text-text">Termos de Uso</Link> e a <Link to="/privacidade" className="underline hover:text-text">Política de Privacidade</Link>.</p>
       </div>
     </div>
   );

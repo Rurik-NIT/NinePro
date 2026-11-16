@@ -25,6 +25,9 @@ const Settings = lazy(() => import("@/pages/Settings"));
 const DesignSystem = lazy(() => import("@/pages/DesignSystem"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 const Login = lazy(() => import("@/pages/auth/Login"));
+const Privacy = lazy(() => import("@/pages/legal/Privacy"));
+const Terms = lazy(() => import("@/pages/legal/Terms"));
+const DataDeletion = lazy(() => import("@/pages/legal/DataDeletion"));
 const Admin = lazy(() => import("@/pages/admin/Admin"));
 const AgentIntegration = lazy(() => import("@/pages/dev/AgentIntegration"));
 const Builder = lazy(() => import("@/pages/automations/Builder"));
@@ -51,6 +54,10 @@ const N = (loader: () => Promise<Record<string, unknown>>, key: string) => { con
 const hidden = (title: string, description: string) => S(<Campaigns variant={{ title, description }} />);
 
 const router = createBrowserRouter([
+  /* Páginas públicas (sem login) */
+  { path: "/privacidade", element: S(<Privacy />) },
+  { path: "/termos", element: S(<Terms />) },
+  { path: "/exclusao-de-dados", element: S(<DataDeletion />) },
   {
     path: "/",
     element: <RequireAuth><AppShell /></RequireAuth>,

@@ -9,6 +9,8 @@ const API_ROUTES: { prefix: string; module: string; fn: string }[] = [
   { prefix: "/api/app", module: "/server/app.ts", fn: "handleApp" },
   { prefix: "/api/connect", module: "/server/connections.ts", fn: "handleConnect" },
   { prefix: "/api/sync", module: "/server/connections.ts", fn: "handleSync" },
+  { prefix: "/api/meta-exclusao", module: "/server/metaCallbacks.ts", fn: "handleMetaDeletion" },
+  { prefix: "/api/meta-desautorizar", module: "/server/metaCallbacks.ts", fn: "handleMetaDeauthorize" },
   { prefix: "/api/mcp", module: "/server/agentApi.ts", fn: "handleMcp" },
   { prefix: "/api/v1", module: "/server/agentApi.ts", fn: "handleRest" },
 ];
