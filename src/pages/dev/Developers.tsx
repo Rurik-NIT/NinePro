@@ -73,7 +73,7 @@ export function ApiKeys() {
 }
 
 /* ------------------------------------------------------------------ Usuários */
-export function Members() {
+export function Members({ title = "Usuários" }: { title?: string }) {
   const toast = useToast();
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
@@ -83,7 +83,7 @@ export function Members() {
   return (
     <>
       <ListScreen<M>
-        title="Usuários" description="Quem acessa este espaço de trabalho e com qual papel."
+        title={title} description="Quem acessa este espaço de trabalho e com qual papel."
         rows={MEMBERS} getId={(m) => m.id} searchText={(m) => `${m.name} ${m.email}`} searchPlaceholder="Buscar pessoas"
         filters={[
           { id: "role", label: "Papel", options: roles.map((r) => ({ value: r, label: r })), match: (m, v) => m.role === v },

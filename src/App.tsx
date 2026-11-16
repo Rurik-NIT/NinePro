@@ -31,6 +31,8 @@ const inbox = () => import("@/pages/inbox/Inbox");
 const posts = () => import("@/pages/posts/Posts");
 const analytics = () => import("@/pages/analytics/Analytics");
 const biz = () => import("@/pages/misc/Business");
+const cons = () => import("@/pages/console/Console");
+const ConsoleTeam = lazy(() => import("@/pages/dev/Developers").then((m) => ({ default: () => <m.Members title="Equipe" /> })));
 
 const S = (el: JSX.Element) => <Suspense fallback={<LoadingState />}>{el}</Suspense>;
 const N = (loader: () => Promise<Record<string, unknown>>, key: string) => { const C = named(loader, key); return S(<C />); };
@@ -115,6 +117,18 @@ const router = createBrowserRouter([
       { path: "saldo", element: <Navigate to="/faturamento" replace /> },
       { path: "configuracoes", element: S(<Settings />) },
       { path: "design-system", element: S(<DesignSystem />) },
+
+      /* Produto Console */
+      { path: "console", element: N(cons, "ConsolePlatforms") },
+      { path: "console/numeros", element: N(cons, "ConsoleNumbers") },
+      { path: "console/perfis", element: N(cons, "ConsoleProfiles") },
+      { path: "console/sessoes", element: N(cons, "ConsoleSessions") },
+      { path: "console/webhooks", element: N(dev, "Webhooks") },
+      { path: "console/logs", element: N(dev, "Logs") },
+      { path: "console/chaves-api", element: N(dev, "ApiKeys") },
+      { path: "console/apps", element: N(cons, "ConsoleApps") },
+      { path: "console/equipe", element: S(<ConsoleTeam />) },
+      { path: "console/configuracoes", element: S(<Settings />) },
 
       /* rotas antigas (etapa 1) → novas */
       { path: "campanhas", element: <Navigate to="/anuncios/campanhas" replace /> },

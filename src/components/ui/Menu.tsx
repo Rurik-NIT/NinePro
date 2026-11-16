@@ -13,7 +13,7 @@ import { fieldBase } from "./Input";
 export const popSurface =
   "z-50 min-w-[180px] overflow-hidden rounded-lg border border-line bg-overlay p-1 text-body text-text shadow-pop animate-pop-in";
 const itemCls =
-  "relative flex h-8 cursor-pointer select-none items-center gap-2.5 rounded-sm px-2.5 outline-none transition-colors data-[highlighted]:bg-soft data-[disabled]:pointer-events-none data-[disabled]:opacity-40 [&_svg]:size-4 [&_svg]:text-text-muted";
+  "relative flex min-h-8 cursor-pointer select-none items-center gap-2.5 rounded-sm px-2.5 py-1.5 outline-none transition-colors data-[highlighted]:bg-soft data-[disabled]:pointer-events-none data-[disabled]:opacity-40 [&_svg]:size-4 [&_svg]:text-text-muted";
 
 /* ---------------- Dropdown ---------------- */
 export const Menu = DM.Root;

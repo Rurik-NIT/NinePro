@@ -2,7 +2,7 @@ import {
   BarChart3, Blocks, Bot, Building2, Cable, CalendarClock, ChartLine, CircleDollarSign, FileText, Gauge, Globe, Hash, Home, Image, Inbox,
   KeyRound, Layers, LayoutGrid, ListChecks, Megaphone, MessageCircle, MessageSquare, MessagesSquare, Mic, Phone, PhoneCall, Radio,
   Receipt, ScrollText, Send, Settings, ShieldCheck, ShoppingBag, Sparkles, Star, Tag, Target, Ticket, UserRound, Users, Webhook, Workflow,
-  AtSign, BadgeCheck, Contact, FolderSync, Smartphone, Server, Link2, type LucideIcon,
+  AtSign, BadgeCheck, Contact, FolderSync, Smartphone, Server, Link2, Boxes, AppWindow, type LucideIcon,
 } from "lucide-react";
 
 /**
@@ -166,6 +166,24 @@ export const SETTINGS_NAV: NavItem = {
   ] }],
 };
 
+/** Produto Console (para quem integra o NinePro ao próprio software) — sidebar plana, como na referência. */
+export const CONSOLE_NAV: NavGroup[] = [{
+  id: "console",
+  items: [
+    { id: "c-platforms", label: "Plataformas", path: "/console", icon: Boxes },
+    { id: "c-numbers", label: "Números", path: "/console/numeros", icon: Phone },
+    { id: "c-profiles", label: "Perfis", path: "/console/perfis", icon: UserRound },
+    { id: "c-sessions", label: "Sessões", path: "/console/sessoes", icon: Radio },
+    { id: "c-webhooks", label: "Webhooks", path: "/console/webhooks", icon: Webhook },
+    { id: "c-logs", label: "Logs", path: "/console/logs", icon: ScrollText },
+    { id: "c-keys", label: "Chaves de API", path: "/console/chaves-api", icon: KeyRound },
+    { id: "c-apps", label: "Seus apps", path: "/console/apps", icon: AppWindow },
+    { id: "c-team", label: "Equipe", path: "/console/equipe", icon: Users },
+  ],
+}];
+export const CONSOLE_SETTINGS: NavLeaf = { id: "c-settings", label: "Configurações", path: "/console/configuracoes", icon: Settings };
+export const isConsole = (pathname: string) => pathname === "/console" || pathname.startsWith("/console/");
+
 export const SYSTEM_NAV: NavLeaf = { id: "design-system", label: "Design System", path: "/design-system", icon: Blocks, shortcut: "D" };
 
 /* Telas fora da sidebar (acessíveis por atalho/paleta, como na referência) */
@@ -190,6 +208,8 @@ export type NavLeafWithModule = NavLeaf & { module?: NavItem };
 export const ALL_LEAVES: NavLeafWithModule[] = [
   ...ALL_TOP.flatMap((m): NavLeafWithModule[] => (m.children ? m.children.flatMap((g) => g.items.map((l) => ({ ...l, module: m }))) : [{ id: m.id, label: m.label, path: m.path, icon: m.icon, shortcut: m.shortcut }])),
   ...EXTRA_NAV,
+  ...CONSOLE_NAV[0].items.map((l) => ({ ...l, label: `${l.label} (Console)` })),
+  { ...CONSOLE_SETTINGS, label: "Configurações (Console)" },
   SYSTEM_NAV,
 ];
 /** Compatibilidade com a paleta de comandos e atalhos. */

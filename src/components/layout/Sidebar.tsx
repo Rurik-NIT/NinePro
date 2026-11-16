@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/cn";
 import { useTheme, type ThemePreference } from "@/lib/theme";
-import { NAV, SETTINGS_NAV, SYSTEM_NAV, findLeaf, findModule, type NavItem, type NavLeaf } from "@/config/navigation";
+import { CONSOLE_NAV, CONSOLE_SETTINGS, NAV, SETTINGS_NAV, SYSTEM_NAV, findLeaf, findModule, isConsole, type NavItem, type NavLeaf } from "@/config/navigation";
 import { Avatar } from "@/components/ui/Badge";
 import { IconButton } from "@/components/ui/Button";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuRadioGroup, MenuSeparator, MenuTrigger, Tooltip } from "@/components/ui/Menu";
@@ -15,6 +15,7 @@ function Entry({ item, active, collapsed, onClick, hasChildren }: { item: NavLea
   const el = (
     <NavLink
       to={item.path}
+      end
       onClick={onClick}
       aria-current={active ? "page" : undefined}
       className={cn(itemBase, collapsed ? "justify-center px-0" : "px-2.5", active ? "bg-soft text-text" : "text-text-muted hover:bg-surface-2 hover:text-text")}
@@ -42,7 +43,8 @@ export function Sidebar({ collapsed, onToggleCollapsed, onNavigate, mobile }: { 
   const { preference, setPreference } = useTheme();
   const navigate = useNavigate();
   const { pathname, search } = useLocation();
-  const module = findModule(pathname);
+  const consoleMode = isConsole(pathname);
+  const module = consoleMode ? undefined : findModule(pathname);
   const leaf = findLeaf(pathname, search);
   const [showRoot, setShowRoot] = useState(false);
   useEffect(() => setShowRoot(false), [pathname]);
@@ -72,22 +74,28 @@ export function Sidebar({ collapsed, onToggleCollapsed, onNavigate, mobile }: { 
                 <span className="grid size-7 place-items-center rounded-sm bg-series-4 text-[11px] font-extrabold text-white">AU</span>
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate text-secondary font-bold">Loja Aurora</span>
-                  <span className="truncate font-mono text-[10px] uppercase tracking-[0.06em] text-text-dim">Estúdio · demo</span>
+                  <span className="truncate font-mono text-[10px] uppercase tracking-[0.06em] text-text-dim">{consoleMode ? "Console" : "Estúdio"} · demo</span>
                 </span>
                 <ChevronsUpDown className="size-4 text-text-dim" />
               </button>
             </MenuTrigger>
-            <MenuContent className="w-[240px]">
+            <MenuContent className="w-[260px]">
               <MenuLabel>Produto</MenuLabel>
-              <MenuItem icon={<span className="grid size-4 place-items-center rounded-[3px] bg-accent text-[8px] font-extrabold text-accent-ink">E</span>}>Estúdio — suas contas e canais</MenuItem>
-              <MenuItem disabled icon={<span className="grid size-4 place-items-center rounded-[3px] bg-soft text-[8px] font-extrabold">C</span>}>Console — para seus clientes (em breve)</MenuItem>
+              <MenuItem onSelect={() => { navigate("/"); onNavigate?.(); }} icon={<span className="grid size-4 place-items-center rounded-[3px] bg-accent text-[8px] font-extrabold text-accent-ink">E</span>}>
+                <span className="flex flex-col"><span className="font-semibold">Estúdio{!consoleMode && " ✓"}</span><span className="t-caption">Suas próprias contas e canais</span></span>
+              </MenuItem>
+              <MenuItem onSelect={() => { navigate("/console"); onNavigate?.(); }} icon={<span className="grid size-4 place-items-center rounded-[3px] bg-text text-[8px] font-extrabold text-text-inverse">C</span>}>
+                <span className="flex flex-col"><span className="font-semibold">Console{consoleMode && " ✓"}</span><span className="t-caption">Para os usuários do seu software</span></span>
+              </MenuItem>
             </MenuContent>
           </Menu>
         </div>
       )}
 
       <nav className={cn("flex-1 overflow-y-auto py-3", collapsed ? "px-2" : "px-3")}>
-        {drill ? (
+        {consoleMode ? (
+          <ul className="flex flex-col gap-0.5">{CONSOLE_NAV[0].items.map((l) => <li key={l.id}><Entry item={l} active={pathname === l.path} collapsed={collapsed} onClick={onNavigate} /></li>)}</ul>
+        ) : drill ? (
           <div key={drill.id} className="animate-fade-in">
             {!collapsed ? (
               <button type="button" onClick={() => setShowRoot(true)} className="mb-2 flex h-8 w-full items-center gap-1.5 rounded-md px-2 text-secondary font-semibold text-text-muted transition-colors hover:bg-surface-2 hover:text-text">
@@ -121,7 +129,7 @@ export function Sidebar({ collapsed, onToggleCollapsed, onNavigate, mobile }: { 
       </nav>
 
       <div className={cn("flex flex-col gap-0.5 border-t border-line py-3", collapsed ? "px-2" : "px-3")}>
-        <Entry item={SETTINGS_NAV} active={module?.id === "settings"} collapsed={collapsed} hasChildren onClick={onNavigate} />
+        {consoleMode ? <Entry item={CONSOLE_SETTINGS} active={pathname === CONSOLE_SETTINGS.path} collapsed={collapsed} onClick={onNavigate} /> : <Entry item={SETTINGS_NAV} active={module?.id === "settings"} collapsed={collapsed} hasChildren onClick={onNavigate} />}
         <Entry item={SYSTEM_NAV} active={leaf?.id === SYSTEM_NAV.id} collapsed={collapsed} onClick={onNavigate} />
         <Menu>
           <MenuTrigger asChild>

@@ -10,7 +10,7 @@ Legenda — **Status NinePro:** ✅ implementada · 🟡 parcial · ⬜ pendente
 | Referência | NinePro | Status |
 |---|---|---|
 | Sidebar com drill-down por módulo, grupos Communications/Developers | Mesma estrutura (`config/navigation.ts`), grupos Comunicação/Desenvolvedores | ✅ |
-| Seletor STUDIO/CONSOLE | Seletor Estúdio/Console (Console desabilitado) | 🟡 |
+| Seletor STUDIO/CONSOLE | Seletor Estúdio/Console, alternando navegação e telas | ✅ |
 | Paleta ⌘K com todas as páginas | Paleta com todas as páginas e módulos | ✅ |
 | Trilha `Módulo / Página` + contador | Idem | ✅ |
 
@@ -18,7 +18,7 @@ Legenda — **Status NinePro:** ✅ implementada · 🟡 parcial · ⬜ pendente
 | Referência | NinePro (rota) | Conteúdo-chave observado | Status |
 |---|---|---|---|
 | Home | `/` Início | Hero, plataformas, agentes, quickstart (MCP/CLI/API), passos | ✅ |
-| Connections | `/conexoes` | Onboarding em 4 passos; conexões por tipo | 🟡 (lista de plataformas; onboarding a reproduzir) |
+| Connections | `/conexoes` | Onboarding em 4 passos sequenciais (uso → conectar → onde trabalhar → novidades), atalho "conecte uma conta primeiro", catálogo de 31 conectores, pular configuração; depois, lista de conexões | ✅ |
 | Posts › All posts | `/publicacoes` | Filtro, ordenação, grade/lista/calendário, densidade 2–5, vazio "conectar" | ✅ |
 | Posts › Queues | `/publicacoes/filas` | Filas de publicação | ✅ |
 | Analytics › Posting | `/analises/publicacoes` | 4 filtros, 5 KPIs, 6 gráficos, top posts | ✅ |
@@ -67,11 +67,12 @@ Legenda — **Status NinePro:** ✅ implementada · 🟡 parcial · ⬜ pendente
 | Billing (= Balance) | `/faturamento` | Plano, cartão, recarga automática, contas conectadas, o que o cartão libera | ✅ |
 | Settings (13 seções) | `/configuracoes?secao=…` + `/uso`, `/faturamento` | Perfil, Segurança (2FA, sessões, sair de todos), Retenção, Notificações (alertas, canal, e-mail, webhook), Apps conectados, Slack, Ranking, Provedores de IA, Marca própria (com prévia), SSO, Zona de perigo — ver 12 | ✅ |
 | Hashtag research, Live | — | Redirecionam para Connections na referência (inativas) | n/a |
-| Produto CONSOLE (11 rotas) | — | Fase posterior | ⬜ |
+| Produto CONSOLE (11 rotas) | `/console/*` | Seletor de produto funcional; Plataformas (38, slug, autenticação, capacidades), Números, Perfis, Sessões, Webhooks, Logs, Chaves de API, Seus apps (OAuth próprio), Equipe, Configurações | ✅ |
 
 
 ## Resumo (2026-11-16, fim da rodada de paridade 1)
 - **Telas da referência mapeadas:** 77 rotas (ver 01) + 13 seções de Configurações.
 - **Implementadas no NinePro:** 56 rotas navegáveis, verificadas no navegador sem erros de console e sem overflow (1440 px).
-- **Pendentes:** onboarding de Conexões, conteúdo de Inbox › Campanhas/Contatos (bloqueado na referência) e o produto Console (11 rotas).
+- **Pendentes:** apenas o conteúdo de Inbox › Campanhas/Contatos, bloqueado por erro de acesso no próprio sistema de referência.
+- **Rodada 3 (2026-11-16):** onboarding de Conexões e produto Console concluídos (ver 12).
 - **Rodada 2 (2026-11-16):** construtor de automação e as 13 seções de Configurações concluídos (mapeamento em `12-settings-and-builder.md`).

@@ -1,4 +1,6 @@
 import { Cable, Check, Lock, ShoppingCart, Webhook } from "lucide-react";
+import { useState } from "react";
+import { ConnectionsOnboarding, resetOnboarding } from "./connections/Onboarding";
 import { PLATFORMS, PLATFORM_ORDER, type PlatformId } from "@/data/demo";
 import { Page, PageHeader, Section } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/Button";
@@ -18,10 +20,10 @@ const SCOPES: Record<PlatformId, string[]> = {
  * Conexões — honestidade sobre o estado real: nenhuma integração existe nesta versão.
  * Os botões ficam desabilitados com explicação, em vez de simular OAuth.
  */
-export default function Connections() {
+function ConnectionsList({ onRedo }: { onRedo: () => void }) {
   return (
     <Page>
-      <PageHeader title="Conexões" description="Contas de anúncio e fontes de conversão. Todo dado exibido no NinePro virá daqui." />
+      <PageHeader title="Conexões" description="Contas, números e fontes de conversão. Todo dado exibido no NinePro virá daqui." actions={<Button variant="ghost" onClick={onRedo}>Refazer configuração inicial</Button>} />
       <InlineNotice tone="info" icon={<Lock />}>
         Nesta versão nenhuma integração está ativa. O restante do app usa dados fictícios para validar o Design System.
       </InlineNotice>
@@ -65,4 +67,10 @@ export default function Connections() {
       </Section>
     </Page>
   );
+}
+
+export default function Connections() {
+  const read = () => { try { return !!JSON.parse(localStorage.getItem("ninepro.onboarding.v2") ?? "{}").done; } catch { return false; } };
+  const [done, setDone] = useState(read);
+  return done ? <ConnectionsList onRedo={() => { resetOnboarding(); setDone(false); }} /> : <ConnectionsOnboarding onFinish={() => setDone(true)} />;
 }

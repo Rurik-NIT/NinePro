@@ -5,7 +5,7 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import { cn } from "@/lib/cn";
 import { useTheme } from "@/lib/theme";
 import { useLocalState } from "@/lib/useLocalState";
-import { findLeaf, findModule } from "@/config/navigation";
+import { findLeaf, findModule, isConsole } from "@/config/navigation";
 import { IconButton } from "@/components/ui/Button";
 import { Kbd } from "@/components/ui/Badge";
 import { Tooltip } from "@/components/ui/Menu";
@@ -69,13 +69,19 @@ function Header({ onOpenMenu, onOpenSearch }: { onOpenMenu: () => void; onOpenSe
     <header className="sticky top-0 z-20 flex h-header shrink-0 items-center gap-2 border-b border-line bg-canvas px-3 lg:px-1">
       <IconButton label="Abrir menu" onClick={onOpenMenu} className="lg:hidden"><MenuIcon /></IconButton>
       <nav aria-label="Trilha" className="flex min-w-0 flex-1 items-center gap-2 text-body">
+        {isConsole(pathname) && (
+          <>
+            <Link to="/console" className="hidden font-semibold text-text-dim hover:text-text sm:inline">Console</Link>
+            <span className="hidden text-text-dim sm:inline" aria-hidden>/</span>
+          </>
+        )}
         {module && module.id !== current?.id && (
           <>
             <Link to={module.path} className="hidden font-semibold text-text-dim hover:text-text sm:inline">{module.label}</Link>
             <span className="hidden text-text-dim sm:inline" aria-hidden>/</span>
           </>
         )}
-        <span className="truncate font-bold text-text" aria-current="page">{current?.label ?? "Página"}</span>
+        <span className="truncate font-bold text-text" aria-current="page">{current?.label.replace(" (Console)", "") ?? "Página"}</span>
       </nav>
       <button
         type="button"

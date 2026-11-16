@@ -35,3 +35,20 @@ Mapeado em 2026-11-16 com cliques reais no painel do navegador (a varredura auto
 **"+" entre nós:** *Alterar algo*. **Ações de alteração (8):** Pausar; Reativar o que uma regra pausou; Ajustar orçamento diário; Ajustar lance ou teto de custo; Ajustar CPA ou ROAS alvo (Google); Mover orçamento do pior para o melhor; Duplicar (a cópia começa pausada); Marcar no nome.
 
 **Enviar alerta:** destino Slack ou e-mail (os dois desabilitados sem canal conectado).
+
+## Conexões — onboarding (CONFIRMADO)
+Título de boas-vindas + 4 passos **sequenciais** (2–4 ficam bloqueados até responder o 1):
+1. *Como você quer usar?* — dois cartões ilustrados: usar você mesmo / integrar ao seu software; link "ainda não sei? conecte uma conta primeiro" (pula para o passo 2 com "voltar à pergunta").
+2. *Conecte sua primeira conta ou número* — 31 conectores: TikTok, Instagram, YouTube, Facebook, LinkedIn, X, Threads, Bluesky, Pinterest, Google Business, Discord, Slack, Shopify, WordPress, Wix, Webflow, WhatsApp, Telegram, LINE, WeChat, iMessage, Número de telefone, Meta Ads, Google Ads, TikTok Ads, LinkedIn Ads, Pinterest Ads, X Ads, OpenAI Ads, Reddit Ads, Microsoft Ads.
+3. *Onde você vai trabalhar?* — painel, API, ou Claude/ChatGPT/Cursor (opções internas não abertas: o passo exige responder o 1, o que gravaria uma preferência na conta).
+4. *Fique por dentro* — acompanhar novidades (X, Telegram).
+Rodapé: "Pular configuração".
+
+## Produto Console (CONFIRMADO)
+Sidebar plana: Plataformas · Números · Perfis · Sessões · Webhooks · Logs · Chaves de API · Seus apps · Equipe · Configurações.
+- **Plataformas (38):** tabela plataforma/slug/autenticação (OAuth2, credenciais, token de bot; "via Facebook/LinkedIn/Pinterest")/capacidades (publicação, análises, caixa de entrada, anúncios, comércio, e-mail, agenda, contatos)/contas; filtro por categoria.
+- **Perfis:** filtros plataforma/status/ordem, novo perfil; colunas perfil, ID, plataformas conectadas, ativas, precisam reconectar, última atividade.
+- **Seus apps:** apps OAuth próprios (marca na tela de consentimento): app, plataforma, status, client ID, permissões, ID do app, contas.
+- **Sessões:** filtros resultado/plataforma/perfil, período 24h/7d/30d; colunas quando, perfil, plataforma, método, resultado.
+- **Números:** conectar número de WhatsApp, comprar número; colunas número, ID, tipo, canais, perfil, status, preço, adicionado.
+- **Webhooks, Logs, Chaves de API, Equipe, Configurações:** mesmas telas do Estúdio.
