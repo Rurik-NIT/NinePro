@@ -26,6 +26,7 @@ const DesignSystem = lazy(() => import("@/pages/DesignSystem"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 const Login = lazy(() => import("@/pages/auth/Login"));
 const Admin = lazy(() => import("@/pages/admin/Admin"));
+const AgentIntegration = lazy(() => import("@/pages/dev/AgentIntegration"));
 const Builder = lazy(() => import("@/pages/automations/Builder"));
 
 const conv = () => import("@/pages/ads/Conversions");
@@ -118,10 +119,11 @@ const router = createBrowserRouter([
       { path: "telefonia/ids-remetente", element: <DemoOnly title="IDs de remetente" area="a telefonia">{N(phone, "SenderIds")}</DemoOnly> },
       { path: "telefonia/rcs", element: <DemoOnly title="RCS" area="a telefonia">{N(phone, "Rcs")}</DemoOnly> },
 
+      { path: "integracao", element: S(<AgentIntegration />) },
       { path: "chaves-api", element: N(dev, "ApiKeys") },
       { path: "usuarios", element: <DemoOnly title="Usuários" area="o convite de equipe">{N(dev, "Members")}</DemoOnly> },
       { path: "webhooks", element: N(dev, "Webhooks") },
-      { path: "logs", element: <DemoOnly title="Logs" area="a API pública">{N(dev, "Logs")}</DemoOnly> },
+      { path: "logs", element: N(dev, "Logs") },
 
       { path: "uso", element: <DemoOnly title="Uso" area="o faturamento">{N(biz, "Usage")}</DemoOnly> },
       { path: "faturamento", element: <DemoOnly title="Faturamento" area="o faturamento">{N(biz, "Billing")}</DemoOnly> },
@@ -136,7 +138,7 @@ const router = createBrowserRouter([
       { path: "console/perfis", element: <DemoOnly title="Perfis" area="a API pública">{N(cons, "ConsoleProfiles")}</DemoOnly> },
       { path: "console/sessoes", element: <DemoOnly title="Sessões" area="a API pública">{N(cons, "ConsoleSessions")}</DemoOnly> },
       { path: "console/webhooks", element: N(dev, "Webhooks") },
-      { path: "console/logs", element: <DemoOnly title="Logs" area="a API pública">{N(dev, "Logs")}</DemoOnly> },
+      { path: "console/logs", element: N(dev, "Logs") },
       { path: "console/chaves-api", element: N(dev, "ApiKeys") },
       { path: "console/apps", element: <DemoOnly title="Apps" area="a API pública">{N(cons, "ConsoleApps")}</DemoOnly> },
       { path: "console/equipe", element: <DemoOnly title="Equipe" area="o convite de equipe">{S(<ConsoleTeam />)}</DemoOnly> },

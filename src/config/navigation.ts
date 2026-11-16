@@ -139,6 +139,7 @@ export const NAV: NavGroup[] = [
     id: "dev",
     label: "Desenvolvedores",
     items: [
+      { id: "agents", label: "Integração com agentes", path: "/integracao", icon: Bot },
       { id: "api-keys", label: "Chaves de API", path: "/chaves-api", icon: KeyRound, shortcut: "K" },
       { id: "users", label: "Usuários", path: "/usuarios", icon: Users },
       { id: "webhooks", label: "Webhooks", path: "/webhooks", icon: Webhook, shortcut: "W" },

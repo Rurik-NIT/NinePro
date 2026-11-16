@@ -15,8 +15,8 @@ import type { ConvEvent } from "./demo/extra";
  */
 export type Audience = (typeof extra.AUDIENCES)[number];
 export type LeadForm = (typeof extra.LEAD_FORMS)[number];
-export interface ApiKey { id: string; name: string; key: string; scope: string; status: "Ativa" | "Revogada"; permission: string; createdAt: Date }
-export interface Webhook { id: string; name: string; endpoint: string; status: "Ativo" | "Pausado"; events: string[]; health: number; lastDelivery: Date }
+export interface ApiKey { id: string; name: string; key: string; scope: string; status: "Ativa" | "Revogada"; permission: string; createdAt: Date; lastUsedAt?: Date | null }
+export interface Webhook { id: string; name: string; endpoint: string; status: "Ativo" | "Pausado"; events: string[]; health: number; lastDelivery: Date | null; lastStatus?: number | null; secret?: string; deliveries?: number }
 export interface AutomationRow { id: string; templateId: string; name: string; target: string; active: boolean; createdAt: string; condition?: string; action?: string }
 
 interface DataCtx {
@@ -101,8 +101,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         supabase.from("audiences").select("id, name, type, size, status, ad_accounts(name, platform)").eq("workspace_id", ws).order("created_at"),
         supabase.from("lead_forms").select("id, name, status, locale, created_at, platform, leads(count)").eq("workspace_id", ws).order("created_at"),
         supabase.from("conversion_events").select("id, type, source, sent_to, page, value, status, received_at, campaigns(name)").eq("workspace_id", ws).order("received_at", { ascending: false }).limit(500),
-        supabase.from("api_keys").select("id, name, prefix, scope, permission, revoked_at, created_at").eq("workspace_id", ws).order("created_at", { ascending: false }),
-        supabase.from("webhooks").select("id, name, endpoint, events, active, created_at").eq("workspace_id", ws).order("created_at", { ascending: false }),
+        supabase.from("api_keys").select("id, name, prefix, scope, permission, revoked_at, created_at, last_used_at").eq("workspace_id", ws).order("created_at", { ascending: false }),
+        supabase.from("webhooks").select("id, name, endpoint, events, active, created_at, signing_secret, last_delivery_at, last_status, webhook_deliveries(status, created_at)").order("created_at", { referencedTable: "webhook_deliveries", ascending: false }).limit(50, { referencedTable: "webhook_deliveries" }).eq("workspace_id", ws).order("created_at", { ascending: false }),
         supabase.from("automations").select("id, name, template_id, target, status, created_at, conditions, actions").eq("workspace_id", ws).order("created_at"),
       ]);
       for (const r of [cRes, lRes, aRes, fRes, eRes, kRes, wRes, auRes]) if (r.error) throw new Error(r.error.message);
@@ -148,8 +148,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setAudiences((aRes.data ?? []).map((a: Record<string, unknown>) => ({ id: a.id as string, name: a.name as string, type: a.type as string, size: num(a.size), status: a.status as string, account: (a.ad_accounts as { name: string } | null)?.name ?? "—", platform: ((a.ad_accounts as { platform: PlatformId } | null)?.platform ?? "meta") })));
       setLeadForms((fRes.data ?? []).map((f: Record<string, unknown>) => ({ id: f.id as string, name: f.name as string, status: f.status as string, locale: f.locale as string, createdAt: new Date(f.created_at as string), leads: num((f.leads as { count: number }[] | null)?.[0]?.count), platform: f.platform as PlatformId })));
       setConvEvents((eRes.data ?? []).map((e: Record<string, unknown>) => ({ id: (e.id as string).slice(0, 8), type: e.type as ConvEvent["type"], source: e.source as ConvEvent["source"], sentTo: (e.sent_to as PlatformId[]) ?? [], page: (e.page as string) ?? "—", campaign: (e.campaigns as { name: string } | null)?.name ?? "—", value: num(e.value), receivedAt: new Date(e.received_at as string), status: e.status as ConvEvent["status"] })));
-      setApiKeys((kRes.data ?? []).map((k: Record<string, unknown>) => ({ id: k.id as string, name: k.name as string, key: k.prefix as string, scope: k.scope as string, permission: k.permission as string, status: k.revoked_at ? "Revogada" : "Ativa", createdAt: new Date(k.created_at as string) })));
-      setWebhooks((wRes.data ?? []).map((w: Record<string, unknown>) => ({ id: w.id as string, name: w.name as string, endpoint: w.endpoint as string, events: (w.events as string[]) ?? [], status: w.active ? "Ativo" : "Pausado", health: 100, lastDelivery: new Date(w.created_at as string) })));
+      setApiKeys((kRes.data ?? []).map((k: Record<string, unknown>) => ({ id: k.id as string, name: k.name as string, key: k.prefix as string, scope: k.scope as string, permission: k.permission as string, status: k.revoked_at ? "Revogada" : "Ativa", createdAt: new Date(k.created_at as string), lastUsedAt: k.last_used_at ? new Date(k.last_used_at as string) : null })));
+      setWebhooks((wRes.data ?? []).map((w: Record<string, unknown>) => ({ id: w.id as string, name: w.name as string, endpoint: w.endpoint as string, events: (w.events as string[]) ?? [], status: w.active ? "Ativo" : "Pausado", ...(() => { const d = (w.webhook_deliveries as { status: number }[] | null) ?? []; const ok = d.filter((x) => x.status >= 200 && x.status < 300).length; return { health: d.length ? (ok / d.length) * 100 : NaN, deliveries: d.length }; })(), lastDelivery: w.last_delivery_at ? new Date(w.last_delivery_at as string) : null, lastStatus: (w.last_status as number | null) ?? null, secret: w.signing_secret as string | undefined })));
       setAutomations((auRes.data ?? []).map((a: Record<string, unknown>) => ({ id: a.id as string, templateId: (a.template_id as string) ?? "custom", name: a.name as string, target: (a.target as string) ?? "—", active: a.status === "ativa", createdAt: a.created_at as string, condition: (a.conditions as { text?: string } | null)?.text, action: (a.actions as { text?: string } | null)?.text })));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

@@ -3,23 +3,33 @@ import react from "@vitejs/plugin-react";
 import { fileURLToPath, URL } from "node:url";
 import type { IncomingMessage } from "node:http";
 
-/** Em desenvolvimento, atende POST /api/admin com o mesmo código da Vercel Function. */
-function adminApiDev(env: Record<string, string>): Plugin {
+/** Em desenvolvimento, atende /api/* com o mesmo código das Vercel Functions. */
+const API_ROUTES: { prefix: string; module: string; fn: string }[] = [
+  { prefix: "/api/admin", module: "/server/admin.ts", fn: "handleAdmin" },
+  { prefix: "/api/app", module: "/server/app.ts", fn: "handleApp" },
+  { prefix: "/api/mcp", module: "/server/agentApi.ts", fn: "handleMcp" },
+  { prefix: "/api/v1", module: "/server/agentApi.ts", fn: "handleRest" },
+];
+function apiDev(env: Record<string, string>): Plugin {
   return {
-    name: "ninepro-admin-api-dev",
+    name: "ninepro-api-dev",
     configureServer(server) {
-      server.middlewares.use("/api/admin", async (req: IncomingMessage, res, next) => {
+      server.middlewares.use(async (req: IncomingMessage, res, next) => {
+        const url = req.url ?? "";
+        const route = API_ROUTES.find((r) => url === r.prefix || url.startsWith(r.prefix + "/") || url.startsWith(r.prefix + "?"));
+        if (!route) return next();
         try {
           const chunks: Buffer[] = [];
           for await (const c of req) chunks.push(c as Buffer);
           const headers = new Headers();
           for (const [k, v] of Object.entries(req.headers)) if (typeof v === "string") headers.set(k, v);
-          const request = new Request(`http://localhost${req.url ?? ""}`, { method: req.method, headers, body: req.method === "GET" ? undefined : Buffer.concat(chunks) });
-          const { handleAdmin } = (await server.ssrLoadModule("/server/admin.ts")) as typeof import("./server/admin");
-          const response = await handleAdmin(request, { ...env, ...process.env });
+          const hasBody = !["GET", "HEAD", "OPTIONS"].includes(req.method ?? "GET");
+          const request = new Request(`http://${req.headers.host ?? "localhost"}${url}`, { method: req.method, headers, body: hasBody ? Buffer.concat(chunks) : undefined });
+          const mod = (await server.ssrLoadModule(route.module)) as Record<string, (r: Request, e: Record<string, string | undefined>) => Promise<Response>>;
+          const response = await mod[route.fn](request, { ...env, ...process.env });
           res.statusCode = response.status;
           response.headers.forEach((v, k) => res.setHeader(k, v));
-          res.end(await response.text());
+          res.end(Buffer.from(await response.arrayBuffer()));
         } catch (e) {
           next(e);
         }
@@ -31,7 +41,7 @@ function adminApiDev(env: Record<string, string>): Plugin {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   return {
-    plugins: [react(), adminApiDev(env)],
+    plugins: [react(), apiDev(env)],
     resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
     server: { port: 5179, strictPort: true },
     build: {
