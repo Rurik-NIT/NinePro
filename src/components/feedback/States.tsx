@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/Button";
 import { Tooltip } from "@/components/ui/Menu";
+import { useAuth } from "@/lib/auth";
 
 /** Skeleton — sempre no formato do conteúdo final (padrão confirmado na referência). */
 export const Skeleton = ({ className }: { className?: string }) => <div aria-hidden className={cn("skeleton", className)} />;
@@ -72,7 +73,9 @@ export function InlineNotice({ tone = "info", icon, children, action }: { tone?:
 }
 
 /** Selo obrigatório em toda tela com dados de demonstração. */
-export function DemoBadge({ className }: { className?: string }) {
+export function DemoBadge({ className, liveable }: { className?: string; liveable?: boolean }) {
+  const { mode } = useAuth();
+  if (liveable && mode === "supabase") return null;
   return (
     <Tooltip content="Dados fictícios gerados localmente para demonstrar o Design System. Nenhuma integração real.">
       <span tabIndex={0} className={cn("inline-flex h-6 items-center gap-1.5 rounded-sm border border-dashed border-warning bg-warning-tint px-2 font-mono text-[10.5px] font-medium uppercase tracking-[0.06em] text-warning", className)}>

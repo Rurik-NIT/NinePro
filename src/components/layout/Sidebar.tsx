@@ -5,6 +5,8 @@ import { cn } from "@/lib/cn";
 import { useTheme, type ThemePreference } from "@/lib/theme";
 import { CONSOLE_NAV, CONSOLE_SETTINGS, NAV, SETTINGS_NAV, SYSTEM_NAV, findLeaf, findModule, isConsole, type NavItem, type NavLeaf } from "@/config/navigation";
 import { Avatar } from "@/components/ui/Badge";
+import { useAuth } from "@/lib/auth";
+import { useWorkspace } from "@/lib/workspace";
 import { IconButton } from "@/components/ui/Button";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuRadioGroup, MenuSeparator, MenuTrigger, Tooltip } from "@/components/ui/Menu";
 import { Logo } from "./Logo";
@@ -42,6 +44,11 @@ const themeOptions: { value: ThemePreference; label: string; icon: typeof Sun }[
 export function Sidebar({ collapsed, onToggleCollapsed, onNavigate, mobile }: { collapsed: boolean; onToggleCollapsed?: () => void; onNavigate?: () => void; mobile?: boolean }) {
   const { preference, setPreference } = useTheme();
   const navigate = useNavigate();
+  const auth = useAuth();
+  const ws = useWorkspace();
+  const live = auth.mode === "supabase";
+  const userName = live ? (ws.profileName || auth.user?.email || "Usuário") : "Gestor Demo";
+  const roleLabel = live ? `${ws.current?.name ?? "Sem espaço"} · ${ws.current?.role === "owner" ? "Proprietário" : ws.current?.role === "admin" ? "Administrador" : "Membro"}` : "Administrador";
   const { pathname, search } = useLocation();
   const consoleMode = isConsole(pathname);
   const module = consoleMode ? undefined : findModule(pathname);
@@ -134,12 +141,12 @@ export function Sidebar({ collapsed, onToggleCollapsed, onNavigate, mobile }: { 
         <Menu>
           <MenuTrigger asChild>
             <button type="button" className={cn("mt-1 flex items-center gap-2.5 rounded-md p-1.5 text-left transition-colors hover:bg-surface-2", collapsed && "justify-center")} aria-label="Menu do usuário">
-              <Avatar name="Gestor Demo" size={28} />
+              <Avatar name={userName} size={28} />
               {!collapsed && (
                 <>
                   <span className="flex min-w-0 flex-1 flex-col">
-                    <span className="truncate text-secondary font-bold">Gestor Demo</span>
-                    <span className="truncate text-caption text-text-dim">Administrador</span>
+                    <span className="truncate text-secondary font-bold">{userName}</span>
+                    <span className="truncate text-caption text-text-dim">{roleLabel}</span>
                   </span>
                   <ChevronsUpDown className="size-4 text-text-dim" />
                 </>
@@ -154,7 +161,8 @@ export function Sidebar({ collapsed, onToggleCollapsed, onNavigate, mobile }: { 
             <MenuItem icon={<UserRound />} onSelect={() => { navigate("/configuracoes?secao=perfil"); onNavigate?.(); }}>Perfil</MenuItem>
             <MenuItem icon={<Settings />} shortcut="G S" onSelect={() => { navigate("/configuracoes?secao=uso"); onNavigate?.(); }}>Uso e faturamento</MenuItem>
             <MenuSeparator />
-            <MenuItem icon={<LogOut />} danger disabled>Sair (sem autenticação nesta versão)</MenuItem>
+            {live && ws.workspaces.length > 1 && (<><MenuSeparator /><MenuLabel>Espaço de trabalho</MenuLabel><MenuRadioGroup value={ws.current?.id ?? ""} onValueChange={(v) => ws.select(v)} options={ws.workspaces.map((w) => ({ value: w.id, label: w.name }))} /></>)}
+            {live ? <MenuItem icon={<LogOut />} danger onSelect={() => void auth.signOut()}>Sair</MenuItem> : <MenuItem icon={<LogOut />} danger disabled>Sair (modo demonstração)</MenuItem>}
           </MenuContent>
         </Menu>
       </div>

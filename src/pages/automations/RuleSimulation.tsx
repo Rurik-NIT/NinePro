@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { cn } from "@/lib/cn";
 import { formatDateShort, formatValue } from "@/lib/format";
 import { RULE_NEEDS_CPA, simulateRule, type SimEffect } from "@/lib/ruleSimulation";
+import { useData } from "@/data/source";
 import { Input } from "@/components/ui/Input";
 import { Tooltip } from "@/components/ui/Menu";
 import { SegmentedControl } from "@/components/ui/Tabs";
@@ -21,10 +22,11 @@ export function RuleSimulation({ templateId, target, capPct }: { templateId: str
   const [cpaRaw, setCpaRaw] = useState("60");
   const cpaTarget = Number(cpaRaw.replace(",", ".")) || 0;
   const needsCpa = RULE_NEEDS_CPA.has(templateId);
+  const { campaigns } = useData();
 
   const r = useMemo(
-    () => simulateRule(templateId, { target: target || "Todas as campanhas", cpaTarget: cpaTarget || 60, days: Number(days), capPct }),
-    [templateId, target, cpaTarget, days, capPct],
+    () => simulateRule(templateId, { target: target || "Todas as campanhas", cpaTarget: cpaTarget || 60, days: Number(days), capPct }, campaigns),
+    [templateId, target, cpaTarget, days, capPct, campaigns],
   );
   const maxDaily = Math.max(1, ...r.daily.map((d) => d.events));
   const effect = r.effect ?? "alert";

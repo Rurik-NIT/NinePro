@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/cn";
 import { formatDateShort } from "@/lib/format";
 import { useLocalState } from "@/lib/useLocalState";
+import { useData } from "@/data/source";
 import { simulateConditions, UNSIMULABLE_METRICS, type CondMetric, type CondOp, type CondPeriod, type Condition } from "@/lib/ruleSimulation";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Tag } from "@/components/ui/Badge";
@@ -80,6 +81,8 @@ const Connector = () => <span className="h-5 w-px bg-line-strong" aria-hidden />
 export default function AutomationBuilder() {
   const toast = useToast();
   const navigate = useNavigate();
+  const data = useData();
+  const live = data.mode === "supabase";
   const [, setRules] = useLocalState<Record<string, unknown>[]>("ninepro.demo.rules", []);
   const [, setDrafts] = useLocalState<Record<string, unknown>[]>("ninepro.demo.drafts", []);
   const [name, setName] = useState("");
@@ -122,9 +125,19 @@ export default function AutomationBuilder() {
   ].filter(Boolean) as string[];
   const summary = { name: name.trim() || "Automação sem nome", condition: condLines[0], action: actions.map((a) => (a.kind === "alert" ? "Enviar alerta" : CHANGES.find((c) => c.value === a.change)!.label)).join(" → "), target: trigger === "anuncios" ? (account || "—") : (profile || "—") };
 
-  const saveDraft = () => { setDrafts((d) => [{ id: `d${Date.now()}`, ...summary, savedAt: new Date().toISOString() }, ...d]); toast({ tone: "success", title: "Rascunho salvo neste navegador" }); };
-  const activate = () => {
+  const saveDraft = async () => {
+    if (live) { const err = await data.saveAutomation({ templateId: "custom", name: summary.name, target: summary.target, active: false, condition: summary.condition, action: summary.action, trigger: { kind: trigger }, conditions: conds, logic, actions }); toast(err ? { tone: "error", title: "Não foi possível salvar", description: err } : { tone: "success", title: "Rascunho salvo", description: "Fica em Todas as automações, desligado." }); return; }
+    setDrafts((d) => [{ id: `d${Date.now()}`, ...summary, savedAt: new Date().toISOString() }, ...d]); toast({ tone: "success", title: "Rascunho salvo neste navegador" });
+  };
+  const activate = async () => {
     if (problems.length) { toast({ tone: "warning", title: "Falta pouco para ativar", description: problems[0] }); return; }
+    if (live) {
+      const err = await data.saveAutomation({ templateId: "custom", name: summary.name, target: summary.target, active: true, condition: summary.condition, action: summary.action, trigger: { kind: trigger }, conditions: conds, logic, actions });
+      if (err) { toast({ tone: "error", title: "Não foi possível ativar", description: err }); return; }
+      setStatus("Ativa");
+      toast({ tone: "success", title: "Automação ativada", description: "Salva no banco. A execução nas plataformas exige integração." });
+      navigate("/automacoes"); return;
+    }
     setRules((r) => [...r, { id: `rule-${Date.now()}`, templateId: "custom", name: summary.name, target: summary.target, active: true, createdAt: new Date().toISOString(), condition: summary.condition, action: summary.action }]);
     setStatus("Ativa");
     toast({ tone: "success", title: "Automação ativada (demonstração)", description: "Aparece em Todas as automações. Nenhuma ação real será executada." });
@@ -293,7 +306,8 @@ const Section = ({ label, children }: { label: string; children: ReactNode }) =>
 const Labeled = ({ label, children }: { label: string; children: ReactNode }) => <div className="flex flex-col gap-1.5"><span className="text-secondary font-semibold text-text-soft">{label}</span>{children}</div>;
 
 function PreviewModal({ open, onOpenChange, conds, logic, trigger, summary, problems }: { open: boolean; onOpenChange: (o: boolean) => void; conds: Condition[]; logic: "E" | "OU"; trigger: TriggerKind; summary: { name: string; condition: string; action: string; target: string }; problems: string[] }) {
-  const r = useMemo(() => (open && trigger === "anuncios" ? simulateConditions(conds, logic, 30) : null), [open, conds, logic, trigger]);
+  const { campaigns } = useData();
+  const r = useMemo(() => (open && trigger === "anuncios" ? simulateConditions(conds, logic, 30, campaigns) : null), [open, conds, logic, trigger, campaigns]);
   const max = Math.max(1, ...(r?.daily.map((d) => d.events) ?? [1]));
   return (
     <Modal open={open} onOpenChange={onOpenChange} size="lg" icon={<Eye />} title="Prévia" description={summary.name}>

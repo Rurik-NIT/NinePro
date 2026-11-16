@@ -1,6 +1,7 @@
 import { Download, Mail, RefreshCw, UserRound } from "lucide-react";
 import { useMemo, useState } from "react";
-import { LEADS, LEAD_STATUS, PLATFORMS, type Lead, type LeadStatus } from "@/data/demo";
+import { LEAD_STATUS, PLATFORMS, type Lead, type LeadStatus } from "@/data/demo";
+import { useData } from "@/data/source";
 import { useFilters } from "@/lib/filters";
 import { formatDateTime } from "@/lib/format";
 import { Page, PageHeader } from "@/components/layout/AppShell";
@@ -18,6 +19,8 @@ import { PlatformLabel } from "@/components/data/Platform";
 export default function Leads() {
   const { activePlatforms } = useFilters();
   const toast = useToast();
+  const data = useData();
+  const LEADS = data.leads;
   const [q, setQ] = useState("");
   const [tab, setTab] = useState<"todos" | LeadStatus>("todos");
   const [forms, setForms] = useState<string[]>([]);
@@ -25,7 +28,7 @@ export default function Leads() {
   const [statusOverride, setStatusOverride] = useState<Record<string, LeadStatus>>({});
   const [refreshing, setRefreshing] = useState(false);
 
-  const all = useMemo(() => LEADS.map((l) => ({ ...l, status: statusOverride[l.id] ?? l.status })), [statusOverride]);
+  const all = useMemo(() => LEADS.map((l) => ({ ...l, status: statusOverride[l.id] ?? l.status })), [LEADS, statusOverride]);
   const formOptions = [...new Set(LEADS.map((l) => l.form))].map((f) => ({ value: f, label: f }));
   const rows = all.filter((l) => activePlatforms.includes(l.platform))
     .filter((l) => tab === "todos" || l.status === tab)
@@ -55,10 +58,10 @@ export default function Leads() {
 
   return (
     <Page>
-      <PageHeader meta={<DemoBadge />} title={<span className="inline-flex items-center gap-3">Leads <Count>{rows.length}</Count></span>}
+      <PageHeader meta={<DemoBadge liveable />} title={<span className="inline-flex items-center gap-3">Leads <Count>{rows.length}</Count></span>}
         description="Cadastros recebidos dos formulários de anúncio, com status de qualificação."
         actions={<>
-          <IconButton label="Atualizar" variant="outline" onClick={() => { setRefreshing(true); setTimeout(() => setRefreshing(false), 700); }}><RefreshCw className={refreshing ? "animate-spin" : ""} /></IconButton>
+          <IconButton label="Atualizar" variant="outline" onClick={async () => { setRefreshing(true); await data.refresh(); setTimeout(() => setRefreshing(false), 300); }}><RefreshCw className={refreshing ? "animate-spin" : ""} /></IconButton>
           <Button icon={<Download />} onClick={exportCsv} disabled={!rows.length}>Exportar CSV</Button>
         </>} />
 
@@ -81,7 +84,7 @@ export default function Leads() {
           <div className="flex flex-col gap-5">
             <div className="flex flex-col gap-1.5">
               <span className="text-secondary font-semibold text-text-soft">Status</span>
-              <Select value={statusOverride[open.id] ?? open.status} onValueChange={(v) => { setStatusOverride((s) => ({ ...s, [open.id]: v as LeadStatus })); toast({ tone: "success", title: "Status atualizado", description: `${open.name} → ${LEAD_STATUS[v as LeadStatus].label} (local)` }); }}
+              <Select value={statusOverride[open.id] ?? open.status} onValueChange={async (v) => { setStatusOverride((s) => ({ ...s, [open.id]: v as LeadStatus })); const err = await data.setLeadStatus(open.id, v as LeadStatus); toast(err ? { tone: "error", title: "Não foi possível salvar", description: err } : { tone: "success", title: "Status atualizado", description: `${open.name} → ${LEAD_STATUS[v as LeadStatus].label}${data.mode === "supabase" ? "" : " (local)"}` }); }}
                 options={(Object.keys(LEAD_STATUS) as LeadStatus[]).map((s) => ({ value: s, label: LEAD_STATUS[s].label }))} />
             </div>
             <dl className="flex flex-col divide-y divide-line-soft rounded-md border border-line">

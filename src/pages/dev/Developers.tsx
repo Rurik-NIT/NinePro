@@ -2,6 +2,7 @@ import { Activity, Copy, KeyRound, Pause, Play, Plus, Radio, ScrollText, Trash2,
 import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/cn";
 import { API_KEYS, LOGS, MEMBERS, WEBHOOKS, WEBHOOK_EVENTS } from "@/data/demo/extra";
+import { useData, type ApiKey, type Webhook as WebhookRow } from "@/data/source";
 import { formatDateLong, formatDateTime } from "@/lib/format";
 import { Page, PageHeader } from "@/components/layout/AppShell";
 import { Avatar, StatusBadge, Tag } from "@/components/ui/Badge";
@@ -19,14 +20,22 @@ import { ListScreen } from "@/components/templates/ListScreen";
 /* ------------------------------------------------------------------ Chaves de API */
 export function ApiKeys() {
   const toast = useToast();
-  const [keys, setKeys] = useState(API_KEYS);
+  const data = useData();
+  const live = data.mode === "supabase";
+  const [localKeys, setKeys] = useState<ApiKey[]>(API_KEYS as ApiKey[]);
+  const keys = live ? data.apiKeys : localKeys;
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [perm, setPerm] = useState("Leitura e escrita");
   const [created, setCreated] = useState<string | null>(null);
   const [revoke, setRevoke] = useState<string | null>(null);
-  type K = (typeof API_KEYS)[number];
-  const create = () => {
+  type K = ApiKey;
+  const create = async () => {
+    if (live) {
+      const r = await data.createApiKey(name.trim(), perm);
+      if (r.error) { toast({ tone: "error", title: "Não foi possível criar", description: r.error }); return; }
+      setCreated(r.secret ?? null); setName(""); return;
+    }
     const secret = `np_live_${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 18)}`;
     setKeys((k) => [{ id: `k${Date.now()}`, name: name.trim(), key: `${secret.slice(0, 12)}…${secret.slice(-4)}`, scope: "Todos os perfis", status: "Ativa", permission: perm, createdAt: new Date() }, ...k]);
     setCreated(secret); setName("");
@@ -35,7 +44,7 @@ export function ApiKeys() {
     <>
       <ListScreen<K>
         title="Chaves de API" description="Chaves para integrar o NinePro aos seus sistemas e agentes. Trate como senha."
-        rows={keys} getId={(k) => k.id} searchText={(k) => k.name}
+        rows={keys} liveable onRefresh={data.refresh} refreshable getId={(k) => k.id} searchText={(k) => k.name}
         filters={[
           { id: "st", label: "Status", options: [{ value: "Ativa", label: "Ativa" }, { value: "Revogada", label: "Revogada" }], match: (k, v) => k.status === v },
           { id: "pm", label: "Permissão", options: [{ value: "Leitura e escrita", label: "Leitura e escrita" }, { value: "Somente leitura", label: "Somente leitura" }], match: (k, v) => k.permission === v },
@@ -56,7 +65,7 @@ export function ApiKeys() {
         {created ? (
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2 rounded-md border border-line bg-surface-2 p-3"><code className="flex-1 break-all font-mono text-[12px]">{created}</code><IconButton label="Copiar chave" size="sm" onClick={() => navigator.clipboard?.writeText(created).then(() => toast({ tone: "info", title: "Chave copiada" }), () => undefined)}><Copy /></IconButton></div>
-            <InlineNotice tone="warning">Chave de demonstração: ela não dá acesso a nada.</InlineNotice>
+            <InlineNotice tone="warning">{live ? "Guardamos só o hash desta chave. Se perder, revogue e crie outra." : "Chave de demonstração: ela não dá acesso a nada."}</InlineNotice>
           </div>
         ) : (
           <div className="flex flex-col gap-4">
@@ -67,7 +76,7 @@ export function ApiKeys() {
       </Modal>
       <ConfirmDialog open={!!revoke} onOpenChange={(o) => !o && setRevoke(null)} title="Revogar chave?" confirmLabel="Revogar"
         description="Integrações que usam esta chave param de funcionar imediatamente."
-        onConfirm={() => { setKeys((k) => k.map((x) => (x.id === revoke ? { ...x, status: "Revogada" } : x))); toast({ tone: "success", title: "Chave revogada" }); }} />
+        onConfirm={async () => { if (live) { const err = revoke ? await data.revokeApiKey(revoke) : null; if (err) { toast({ tone: "error", title: "Não foi possível revogar", description: err }); return; } } else setKeys((k) => k.map((x) => (x.id === revoke ? { ...x, status: "Revogada" } : x))); toast({ tone: "success", title: "Chave revogada" }); }} />
     </>
   );
 }
@@ -112,18 +121,21 @@ export function Members({ title = "Usuários" }: { title?: string }) {
 /* ------------------------------------------------------------------ Webhooks */
 export function Webhooks() {
   const toast = useToast();
-  const [hooks, setHooks] = useState(WEBHOOKS);
+  const data = useData();
+  const live = data.mode === "supabase";
+  const [localHooks, setHooks] = useState<WebhookRow[]>(WEBHOOKS as WebhookRow[]);
+  const hooks = live ? data.webhooks : localHooks;
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [events, setEvents] = useState<string[]>(["lead.criado"]);
-  type W = (typeof WEBHOOKS)[number];
+  type W = WebhookRow;
   const valid = name.trim() && /^https:\/\/\S+/.test(url) && events.length;
   return (
     <>
       <ListScreen<W>
         title="Webhooks" description="Receba eventos do NinePro no seu sistema assim que acontecem."
-        rows={hooks} getId={(w) => w.id} searchText={(w) => `${w.name} ${w.endpoint}`}
+        rows={hooks} liveable getId={(w) => w.id} searchText={(w) => `${w.name} ${w.endpoint}`}
         actions={<Button variant="primary" icon={<Plus />} onClick={() => setOpen(true)}>Criar webhook</Button>}
         columns={[
           { id: "name", header: "Nome", sticky: true, sortValue: (w) => w.name, cell: (w) => <span className="font-semibold">{w.name}</span> },
@@ -132,12 +144,12 @@ export function Webhooks() {
           { id: "ev", header: "Eventos", cell: (w) => <div className="flex flex-wrap gap-1">{w.events.map((e) => <Tag key={e}>{e}</Tag>)}</div> },
           { id: "h", header: "Saúde", align: "right", sortValue: (w) => w.health, cell: (w) => <span className={cn("num font-bold", w.health >= 98 ? "text-positive" : w.health >= 90 ? "text-warning" : "text-negative")}>{w.health.toFixed(1).replace(".", ",")}%</span> },
           { id: "last", header: "Última entrega", align: "right", cell: (w) => <span className="text-text-soft">{formatDateTime(w.lastDelivery)}</span> },
-          { id: "act", header: <span className="sr-only">Ações</span>, width: 48, cell: (w) => <IconButton label={w.status === "Ativo" ? "Pausar" : "Retomar"} size="sm" onClick={() => setHooks((h) => h.map((x) => (x.id === w.id ? { ...x, status: x.status === "Ativo" ? "Pausado" : "Ativo" } : x)))}>{w.status === "Ativo" ? <Pause /> : <Play />}</IconButton> },
+          { id: "act", header: <span className="sr-only">Ações</span>, width: 48, cell: (w) => <IconButton label={w.status === "Ativo" ? "Pausar" : "Retomar"} size="sm" onClick={async () => { if (live) { const err = await data.toggleWebhook(w.id); if (err) toast({ tone: "error", title: "Não foi possível alterar", description: err }); } else setHooks((h) => h.map((x) => (x.id === w.id ? { ...x, status: x.status === "Ativo" ? "Pausado" : "Ativo" } : x))); }}>{w.status === "Ativo" ? <Pause /> : <Play />}</IconButton> },
         ]}
         empty={{ icon: <Webhook />, title: "Nenhum webhook ainda", description: "Crie o primeiro para ser avisado quando os eventos acontecerem.", action: <Button variant="primary" icon={<Plus />} onClick={() => setOpen(true)}>Criar webhook</Button> }}
       />
       <Modal open={open} onOpenChange={setOpen} size="lg" icon={<Webhook />} title="Criar webhook" description="Enviamos um POST em JSON, assinado, para cada evento escolhido."
-        footer={<><Button variant="ghost" onClick={() => setOpen(false)}>Cancelar</Button><Button variant="primary" disabled={!valid} onClick={() => { setHooks((h) => [{ id: `w${Date.now()}`, name: name.trim(), endpoint: url, status: "Ativo", events, health: 100, lastDelivery: new Date() }, ...h]); toast({ tone: "success", title: "Webhook criado (demonstração)" }); setOpen(false); setName(""); setUrl(""); }}>Criar webhook</Button></>}>
+        footer={<><Button variant="ghost" onClick={() => setOpen(false)}>Cancelar</Button><Button variant="primary" disabled={!valid} onClick={async () => { if (live) { const err = await data.createWebhook(name.trim(), url, events); if (err) { toast({ tone: "error", title: "Não foi possível criar", description: err }); return; } toast({ tone: "success", title: "Webhook salvo", description: "Entregas reais começam quando o envio de eventos estiver ativo." }); } else { setHooks((h) => [{ id: `w${Date.now()}`, name: name.trim(), endpoint: url, status: "Ativo", events, health: 100, lastDelivery: new Date() }, ...h]); toast({ tone: "success", title: "Webhook criado (demonstração)" }); } setOpen(false); setName(""); setUrl(""); }}>Criar webhook</Button></>}>
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
           <div className="flex flex-col gap-4">
             <Field label="Nome" required>{(p) => <Input {...p} value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex.: Leads para o CRM" />}</Field>

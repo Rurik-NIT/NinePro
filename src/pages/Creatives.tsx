@@ -1,7 +1,8 @@
 import { Film, GalleryHorizontal, Image as ImageIcon, LayoutGrid, List } from "lucide-react";
 import { useMemo, useState } from "react";
 import { METRICS, type MetricId } from "@/config/metrics";
-import { allAds, campaignTotals, scaleTotals, STATUS } from "@/data/demo";
+import { campaignTotals, scaleTotals, STATUS } from "@/data/demo";
+import { flattenAds, useData } from "@/data/source";
 import { GlobalFilters, useFilters } from "@/lib/filters";
 import { formatValue } from "@/lib/format";
 import { useLocalState } from "@/lib/useLocalState";
@@ -46,10 +47,11 @@ export default function Creatives() {
   const { range, activePlatforms } = useFilters();
   const [view, setView] = useLocalState<"grid" | "table">("ninepro.creatives.view", "grid");
   const [sort, setSort] = useState<MetricId>("spend");
+  const { campaigns } = useData();
 
   const ads = useMemo(() => {
     const totalsByCampaign = new Map<string, ReturnType<typeof campaignTotals>>();
-    return allAds()
+    return flattenAds(campaigns)
       .filter((a) => activePlatforms.includes(a.campaign.platform))
       .map((a) => {
         if (!totalsByCampaign.has(a.campaign.id)) totalsByCampaign.set(a.campaign.id, campaignTotals(a.campaign, range));
@@ -61,7 +63,7 @@ export default function Creatives() {
         const dir = METRICS[sort].better === "down" ? 1 : -1;
         return ((Number.isFinite(a) ? a : Infinity * -dir) - (Number.isFinite(b) ? b : Infinity * -dir)) * dir;
       });
-  }, [range, activePlatforms, sort]);
+  }, [campaigns, range, activePlatforms, sort]);
 
   type A = (typeof ads)[number];
   const columns: Column<A>[] = [
@@ -79,7 +81,7 @@ export default function Creatives() {
 
   return (
     <Page>
-      <PageHeader meta={<DemoBadge />} title={<span className="inline-flex items-center gap-3">Criativos <Count>{ads.length}</Count></span>}
+      <PageHeader meta={<DemoBadge liveable />} title={<span className="inline-flex items-center gap-3">Criativos <Count>{ads.length}</Count></span>}
         description="Desempenho por peça, para decidir o que renovar e o que replicar."
         actions={<GlobalFilters />} />
 

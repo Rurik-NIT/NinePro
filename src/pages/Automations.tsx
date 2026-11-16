@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/cn";
 import { PLATFORMS, RULE_CATEGORIES, RULE_TEMPLATES, type RuleCategory, type RuleTemplate } from "@/data/demo";
 import { useLocalState } from "@/lib/useLocalState";
+import { useData } from "@/data/source";
 import { Page, PageHeader } from "@/components/layout/AppShell";
 import { Button, IconButton } from "@/components/ui/Button";
 import { StatusBadge, Tag } from "@/components/ui/Badge";
@@ -27,7 +28,10 @@ export default function Automations({ defaultTab = "regras" }: { defaultTab?: st
   const toast = useToast();
   const navigate = useNavigate();
   const [tab, setTab] = useState(defaultTab);
-  const [rules, setRules] = useLocalState<InstalledRule[]>("ninepro.demo.rules", []);
+  const data = useData();
+  const live = data.mode === "supabase";
+  const [localRules, setRules] = useLocalState<InstalledRule[]>("ninepro.demo.rules", []);
+  const rules: InstalledRule[] = live ? data.automations : localRules;
   const [cat, setCat] = useState<RuleCategory | "todas">("todas");
   const [q, setQ] = useState("");
   const [installing, setInstalling] = useState<RuleTemplate | null>(null);
@@ -40,8 +44,14 @@ export default function Automations({ defaultTab = "regras" }: { defaultTab?: st
 
   const templates = RULE_TEMPLATES.filter((t) => (cat === "todas" || t.category === cat) && (!q || `${t.name} ${t.description}`.toLowerCase().includes(q.toLowerCase())));
 
-  const install = () => {
+  const install = async () => {
     if (!installing || !target.trim()) return;
+    if (live) {
+      const err = await data.saveAutomation({ templateId: installing.id, name: installing.name, target: target.trim(), active: true, condition: installing.condition, action: installing.action });
+      if (err) { toast({ tone: "error", title: "Não foi possível salvar", description: err }); return; }
+      toast({ tone: "success", title: "Regra adicionada", description: "Salva no banco. A execução nas plataformas exige integração." });
+      setInstalling(null); setTarget(""); setTab("regras"); return;
+    }
     setRules((r) => [...r, { id: `rule-${Date.now()}`, templateId: installing.id, name: installing.name, target: target.trim(), active: true, createdAt: new Date().toISOString() }]);
     toast({ tone: "success", title: "Regra adicionada", description: "Modo demonstração: a regra fica salva neste navegador e não executa ações reais." });
     setInstalling(null); setTarget(""); setTab("regras");
@@ -57,7 +67,7 @@ export default function Automations({ defaultTab = "regras" }: { defaultTab?: st
     { id: "target", header: "Alvo", cell: (r) => <Tag>{r.target}</Tag> },
     { id: "status", header: "Status", cell: (r) => (
       <div className="flex items-center gap-2.5">
-        <Switch size="sm" ariaLabel={`Ativar ${r.name}`} checked={r.active && master} disabled={!master} onCheckedChange={(v) => setRules((s) => s.map((x) => x.id === r.id ? { ...x, active: v } : x))} />
+        <Switch size="sm" ariaLabel={`Ativar ${r.name}`} checked={r.active && master} disabled={!master} onCheckedChange={async (v) => { if (live) { const err = await data.toggleAutomation(r.id, v); if (err) toast({ tone: "error", title: "Não foi possível alterar", description: err }); } else setRules((s) => s.map((x) => x.id === r.id ? { ...x, active: v } : x)); }} />
         <StatusBadge tone={!master ? "warning" : r.active ? "positive" : "neutral"}>{!master ? "Suspensa" : r.active ? "Ativa" : "Desligada"}</StatusBadge>
       </div>
     ) },
@@ -71,7 +81,7 @@ export default function Automations({ defaultTab = "regras" }: { defaultTab?: st
 
   return (
     <Page>
-      <PageHeader meta={<DemoBadge />} title="Regras automáticas"
+      <PageHeader meta={<DemoBadge liveable />} title="Regras automáticas"
         description="Proteja o orçamento e escale o que funciona com regras que agem em horário marcado ou ao atingir uma condição."
         actions={<>
           <Button icon={<ShieldCheck />} onClick={() => setLimitsOpen(true)}>Limites</Button>
@@ -165,7 +175,7 @@ export default function Automations({ defaultTab = "regras" }: { defaultTab?: st
 
       <ConfirmDialog open={!!removing} onOpenChange={(o) => !o && setRemoving(null)} title="Remover regra?" confirmLabel="Remover"
         description={`"${removing?.name}" deixa de ser avaliada. O histórico de execuções não é afetado.`}
-        onConfirm={() => { if (removing) { setRules((s) => s.filter((x) => x.id !== removing.id)); toast({ tone: "info", title: "Regra removida" }); } }} />
+        onConfirm={async () => { if (!removing) return; if (live) { const err = await data.deleteAutomation(removing.id); if (err) { toast({ tone: "error", title: "Não foi possível remover", description: err }); return; } } else setRules((s) => s.filter((x) => x.id !== removing.id)); toast({ tone: "info", title: "Regra removida" }); }} />
     </Page>
   );
 }

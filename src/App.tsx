@@ -6,6 +6,9 @@ import { AppShell } from "@/components/layout/AppShell";
 import { TooltipProvider } from "@/components/ui/Menu";
 import { ToastProvider } from "@/components/ui/Toast";
 import { LoadingState } from "@/components/feedback/States";
+import { AuthProvider, useAuth } from "@/lib/auth";
+import { WorkspaceProvider, useWorkspace } from "@/lib/workspace";
+import { DataProvider } from "@/data/source";
 
 /** Carrega um export nomeado de um módulo de forma preguiçosa. */
 const named = <M extends Record<string, unknown>>(loader: () => Promise<M>, key: keyof M) =>
@@ -20,6 +23,7 @@ const Connections = lazy(() => import("@/pages/Connections"));
 const Settings = lazy(() => import("@/pages/Settings"));
 const DesignSystem = lazy(() => import("@/pages/DesignSystem"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
+const Login = lazy(() => import("@/pages/auth/Login"));
 const Builder = lazy(() => import("@/pages/automations/Builder"));
 
 const conv = () => import("@/pages/ads/Conversions");
@@ -41,7 +45,7 @@ const hidden = (title: string, description: string) => S(<Campaigns variant={{ t
 const router = createBrowserRouter([
   {
     path: "/",
-    element: <AppShell />,
+    element: <RequireAuth><AppShell /></RequireAuth>,
     children: [
       { index: true, element: N(biz, "Home") },
       { path: "conexoes", element: S(<Connections />) },
@@ -142,14 +146,32 @@ const router = createBrowserRouter([
   },
 ]);
 
+/** Com Supabase configurado, exige sessão; no modo demonstração, entra direto. */
+function RequireAuth({ children }: { children: JSX.Element }) {
+  const { mode, loading, session } = useAuth();
+  const { loading: wsLoading, current } = useWorkspace();
+  if (mode === "demo") return children;
+  if (loading) return <LoadingState label="Verificando sessão…" className="h-full" />;
+  if (!session) return S(<Login />);
+  if (wsLoading) return <LoadingState label="Carregando espaço de trabalho…" className="h-full" />;
+  if (!current) return <LoadingState label="Preparando seu espaço de trabalho…" className="h-full" />;
+  return children;
+}
+
 export default function App() {
   return (
     <ThemeProvider>
       <TooltipProvider>
         <ToastProvider>
-          <FiltersProvider>
-            <RouterProvider router={router} />
-          </FiltersProvider>
+          <AuthProvider>
+            <WorkspaceProvider>
+              <DataProvider>
+                <FiltersProvider>
+                  <RouterProvider router={router} />
+                </FiltersProvider>
+              </DataProvider>
+            </WorkspaceProvider>
+          </AuthProvider>
         </ToastProvider>
       </TooltipProvider>
     </ThemeProvider>

@@ -17,7 +17,7 @@ export interface ListFilter<T> { id: string; label: string; options: { value: st
  */
 export function ListScreen<T>({
   title, description, demo = true, actions, rows, columns, getId, searchPlaceholder, searchText, filters = [], toolbarExtra,
-  empty, onRowClick, defaultSort, before, after, selectable, refreshable,
+  empty, onRowClick, defaultSort, before, after, selectable, refreshable, liveable, onRefresh,
 }: {
   title: string;
   description?: ReactNode;
@@ -37,6 +37,9 @@ export function ListScreen<T>({
   after?: ReactNode;
   selectable?: boolean;
   refreshable?: boolean;
+  /** Oculta o selo de demonstração quando o banco real está conectado. */
+  liveable?: boolean;
+  onRefresh?: () => Promise<void> | void;
 }) {
   const [q, setQ] = useState("");
   const [fv, setFv] = useState<Record<string, string[]>>({});
@@ -55,7 +58,7 @@ export function ListScreen<T>({
   return (
     <Page>
       <PageHeader
-        meta={demo ? <DemoBadge /> : undefined}
+        meta={demo ? <DemoBadge liveable={liveable} /> : undefined}
         title={<span className="inline-flex items-center gap-3">{title} <Count>{filtered.length}</Count></span>}
         description={description}
         actions={actions}
@@ -65,7 +68,7 @@ export function ListScreen<T>({
         {showToolbar && (
           <TableToolbar actions={<>
             {toolbarExtra}
-            {refreshable && <IconButton label="Atualizar" variant="outline" size="sm" onClick={() => { setLoading(true); setTimeout(() => setLoading(false), 600); }}><RefreshCw className={loading ? "animate-spin" : ""} /></IconButton>}
+            {refreshable && <IconButton label="Atualizar" variant="outline" size="sm" onClick={async () => { setLoading(true); if (onRefresh) await onRefresh(); setTimeout(() => setLoading(false), onRefresh ? 200 : 600); }}><RefreshCw className={loading ? "animate-spin" : ""} /></IconButton>}
           </>}>
             {searchText && <SearchInput value={q} onValueChange={setQ} placeholder={searchPlaceholder ?? "Buscar"} size="sm" wrapperClassName="w-full sm:w-[300px]" />}
             {filters.map((f) => (

@@ -109,14 +109,14 @@ const RULES: Record<string, Rule | { unsupported: string }> = {
   },
 };
 
-export function simulateRule(templateId: string, p: SimParams): SimResult {
+export function simulateRule(templateId: string, p: SimParams, source: Campaign[] = CAMPAIGNS): SimResult {
   const window = { from: new Date(TODAY.getTime() - (p.days - 1) * DAY), to: TODAY };
   const empty = { events: [], campaignsAffected: 0, spendDelta: 0, convDelta: 0, revenueDelta: 0, daily: [], window, baseline: { spend: 0, conversions: 0, revenue: 0 } };
   const rule = RULES[templateId];
   if (!rule) return { simulable: false, reason: "Modelo sem simulação definida.", ...empty };
   if ("unsupported" in rule) return { simulable: false, reason: rule.unsupported, ...empty };
 
-  const campaigns = CAMPAIGNS.filter(targetFilter(p.target));
+  const campaigns = source.filter(targetFilter(p.target));
   const events: SimEvent[] = [];
   const pausedUntil = new Map<string, number>(); // evita contar o mesmo dia pausado duas vezes
 
@@ -204,12 +204,12 @@ const cmp = (a: number, op: CondOp, b: number) => (Number.isNaN(a) ? false : op 
 
 export interface CustomSimResult { simulable: boolean; reason?: string; hits: { date: Date; campaign: Campaign }[]; campaignsAffected: number; daily: { date: Date; events: number }[]; window: { from: Date; to: Date } }
 
-export function simulateConditions(conds: Condition[], logic: "E" | "OU", days = 30): CustomSimResult {
+export function simulateConditions(conds: Condition[], logic: "E" | "OU", days = 30, source: Campaign[] = CAMPAIGNS): CustomSimResult {
   const window = { from: new Date(TODAY.getTime() - (days - 1) * DAY), to: TODAY };
   const blocked = conds.find((c) => UNSIMULABLE_METRICS.includes(c.metric));
   if (blocked) return { simulable: false, reason: "Uma das métricas depende de dados de vendas/CRM que o histórico de demonstração não tem.", hits: [], campaignsAffected: 0, daily: [], window };
   const hits: CustomSimResult["hits"] = [];
-  for (const c of CAMPAIGNS) {
+  for (const c of source) {
     c.days.forEach((d, i) => {
       if (d.date < window.from || d.date > window.to || d.spend === 0) return;
       const results = conds.map((cond) => cmp(metricValue(c, c.days, i, cond), cond.op, cond.value));

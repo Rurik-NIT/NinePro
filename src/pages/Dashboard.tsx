@@ -3,7 +3,9 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Area, Bar, BarChart, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip as RTooltip, XAxis, YAxis } from "recharts";
 import { DEFAULT_KPIS, METRICS, sumTotals, type MetricId, type Totals } from "@/config/metrics";
-import { CAMPAIGNS, PLATFORMS, PLATFORM_ORDER, campaignTotals, dailySeries, STATUS, type PlatformId } from "@/data/demo";
+import { PLATFORMS, PLATFORM_ORDER, campaignTotals, dailySeries, STATUS, type Campaign, type PlatformId } from "@/data/demo";
+import { useData } from "@/data/source";
+import { DataGate } from "@/components/feedback/EmptyWorkspace";
 import { useFilters, GlobalFilters } from "@/lib/filters";
 import { formatDateShort, formatValue } from "@/lib/format";
 import { useLocalState } from "@/lib/useLocalState";
@@ -32,7 +34,8 @@ export default function Dashboard() {
   const [trend, setTrend] = useState<TrendMetric>("spend");
   const [compare, setCompare] = useState(true);
 
-  const campaigns = useMemo(() => CAMPAIGNS.filter((c) => activePlatforms.includes(c.platform)), [activePlatforms]);
+  const { campaigns: source } = useData();
+  const campaigns = useMemo(() => source.filter((c) => activePlatforms.includes(c.platform)), [source, activePlatforms]);
   const cur = useMemo(() => sumTotals(campaigns.map((c) => campaignTotals(c, range))), [campaigns, range]);
   const prev = useMemo(() => sumTotals(campaigns.map((c) => campaignTotals(c, previous))), [campaigns, previous]);
   const series = useMemo(() => dailySeries(campaigns, range), [campaigns, range]);
@@ -85,12 +88,13 @@ export default function Dashboard() {
   return (
     <Page>
       <PageHeader
-        meta={<DemoBadge />}
+        meta={<DemoBadge liveable />}
         title="Visão geral"
         description="Desempenho consolidado das contas de anúncio no período, comparado ao período anterior de mesma duração."
         actions={<><GlobalFilters /><Button icon={<SlidersHorizontal />} onClick={() => setConfigOpen(true)}>Indicadores</Button></>}
       />
 
+      <DataGate>
       <KpiStrip items={kpiItems} />
 
       <div className="grid grid-cols-1 gap-gutter xl:grid-cols-[minmax(0,1fr)_380px]">
@@ -268,6 +272,8 @@ export default function Dashboard() {
         </div>
       </ChartContainer>
 
+      </DataGate>
+
       <MetricConfigurator
         open={configOpen} onOpenChange={setConfigOpen} title="Indicadores do painel" icon={<SlidersHorizontal />}
         description="Escolha até 6 indicadores. A ordem de cima para baixo é a ordem da esquerda para a direita."
@@ -277,7 +283,7 @@ export default function Dashboard() {
   );
 }
 
-function convByPlatform(campaigns: typeof CAMPAIGNS, range: { from: Date; to: Date }, platforms: PlatformId[]) {
+function convByPlatform(campaigns: Campaign[], range: { from: Date; to: Date }, platforms: PlatformId[]) {
   const map = new Map<number, Record<string, number | Date>>();
   for (const c of campaigns) {
     if (!platforms.includes(c.platform)) continue;

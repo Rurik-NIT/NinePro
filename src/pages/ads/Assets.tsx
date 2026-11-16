@@ -1,6 +1,6 @@
 import { FileText, MoreHorizontal, Plus, Users } from "lucide-react";
 import { useState } from "react";
-import { AUDIENCES, LEAD_FORMS } from "@/data/demo/extra";
+import { useData, type Audience, type LeadForm } from "@/data/source";
 import { PLATFORMS, PLATFORM_ORDER } from "@/data/demo";
 import { formatDateLong, formatValue } from "@/lib/format";
 import { Button, IconButton } from "@/components/ui/Button";
@@ -21,12 +21,13 @@ export function Audiences() {
   const [open, setOpen] = useState(false);
   const [type, setType] = useState("Lista de clientes");
   const [name, setName] = useState("");
-  type A = (typeof AUDIENCES)[number];
+  const data = useData();
+  type A = Audience;
   return (
     <>
       <ListScreen<A>
         title="Públicos" description="Listas de clientes, semelhantes, retargeting do site e receitas de segmentação reutilizáveis."
-        rows={AUDIENCES} getId={(a) => a.id} searchText={(a) => a.name} searchPlaceholder="Buscar públicos" refreshable
+        rows={data.audiences} getId={(a) => a.id} searchText={(a) => a.name} searchPlaceholder="Buscar públicos" refreshable liveable onRefresh={data.refresh}
         filters={[
           { id: "type", label: "Tipo", options: AUD_TYPES.map((t) => ({ value: t, label: t })), match: (a, v) => a.type === v },
           { id: "pl", label: "Plataforma", options: PLATFORM_ORDER.map((p) => ({ value: p, label: PLATFORMS[p].label })), match: (a, v) => a.platform === v },
@@ -46,7 +47,7 @@ export function Audiences() {
         empty={{ icon: <Users />, title: "Nenhum público ainda", description: "Crie uma lista de clientes, um semelhante, um retargeting do site ou salve uma receita de segmentação.", action: <Button variant="primary" icon={<Plus />} onClick={() => setOpen(true)}>Criar o primeiro público</Button> }}
       />
       <Modal open={open} onOpenChange={setOpen} icon={<Users />} title="Criar público" description="Escolha o tipo e dê um nome. A plataforma calcula o tamanho após a conexão."
-        footer={<><Button variant="ghost" onClick={() => setOpen(false)}>Cancelar</Button><Button variant="primary" disabled={!name.trim()} onClick={() => { toast({ tone: "success", title: "Público validado", description: "Para enviar à plataforma, conecte uma conta de anúncios." }); setOpen(false); setName(""); }}>Criar público</Button></>}>
+        footer={<><Button variant="ghost" onClick={() => setOpen(false)}>Cancelar</Button><Button variant="primary" disabled={!name.trim()} onClick={async () => { const err = await data.createAudience(name.trim(), type); toast(err ? { tone: "error", title: "Não foi possível criar", description: err } : { tone: "success", title: data.mode === "supabase" ? "Público salvo" : "Público validado", description: "Para enviar à plataforma, conecte uma conta de anúncios." }); if (!err) { setOpen(false); setName(""); } }}>Criar público</Button></>}>
         <div className="flex flex-col gap-4">
           <Field label="Tipo">{(p) => <Select id={p.id} value={type} onValueChange={setType} options={AUD_TYPES.map((t) => ({ value: t, label: t }))} />}</Field>
           <Field label="Nome" required>{(p) => <Input {...p} value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex.: Compradores últimos 90 dias" />}</Field>
@@ -60,11 +61,12 @@ export function Audiences() {
 
 export function LeadForms() {
   const toast = useToast();
-  type F = (typeof LEAD_FORMS)[number];
+  const data = useData();
+  type F = LeadForm;
   return (
     <ListScreen<F>
       title="Formulários" description="Formulários instantâneos das plataformas. Os envios aparecem em Anúncios › Leads."
-      rows={LEAD_FORMS} getId={(f) => f.id} searchText={(f) => f.name} searchPlaceholder="Buscar formulários"
+      rows={data.leadForms} liveable getId={(f) => f.id} searchText={(f) => f.name} searchPlaceholder="Buscar formulários"
       filters={[{ id: "st", label: "Status", options: ["Ativo", "Rascunho", "Arquivado"].map((v) => ({ value: v, label: v })), match: (f, v) => f.status === v }]}
       actions={<Button variant="primary" icon={<Plus />} onClick={() => toast({ tone: "info", title: "Novo formulário", description: "A criação exige uma Página do Facebook conectada." })}>Novo formulário</Button>}
       columns={[

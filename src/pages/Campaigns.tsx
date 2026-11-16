@@ -1,7 +1,9 @@
 import { Columns3, Copy, Download, Megaphone, MoreHorizontal, Pause, Pencil, Play, Plus, SlidersHorizontal } from "lucide-react";
 import { useMemo, useState } from "react";
 import { COLUMN_PRESETS, LOCKED_COLUMNS, METRICS, sumTotals, type MetricId, type Totals } from "@/config/metrics";
-import { CAMPAIGNS, OBJECTIVES, PLATFORMS, STATUS, campaignTotals, scaleTotals, type Campaign, type DeliveryStatus, type Objective } from "@/data/demo";
+import { OBJECTIVES, PLATFORMS, STATUS, campaignTotals, scaleTotals, type Campaign, type DeliveryStatus, type Objective } from "@/data/demo";
+import { useData } from "@/data/source";
+import { DataGate } from "@/components/feedback/EmptyWorkspace";
 import { GlobalFilters, useFilters } from "@/lib/filters";
 import { formatValue } from "@/lib/format";
 import { useLocalState } from "@/lib/useLocalState";
@@ -27,6 +29,7 @@ interface Row { id: string; level: 0 | 1 | 2; name: string; sub?: string; status
 export default function Campaigns({ variant }: { variant?: { title: string; description: string } }) {
   const { range, activePlatforms } = useFilters();
   const toast = useToast();
+  const data = useData();
   const [q, setQ] = useState("");
   const [statusF, setStatusF] = useState<string[]>([]);
   const [objF, setObjF] = useState<string[]>([]);
@@ -44,7 +47,7 @@ export default function Campaigns({ variant }: { variant?: { title: string; desc
 
   const rows = useMemo<Row[]>(() => {
     const term = q.trim().toLowerCase();
-    return CAMPAIGNS.filter((c) => activePlatforms.includes(c.platform))
+    return data.campaigns.filter((c) => activePlatforms.includes(c.platform))
       .filter((c) => !objF.length || objF.includes(c.objective))
       .map((c) => ({ c, status: overrides[c.id] ?? c.status }))
       .filter(({ status }) => !statusF.length || statusF.includes(status))
@@ -59,13 +62,23 @@ export default function Campaigns({ variant }: { variant?: { title: string; desc
           })),
         } as Row;
       });
-  }, [q, statusF, objF, activePlatforms, range, overrides]);
+  }, [data.campaigns, q, statusF, objF, activePlatforms, range, overrides]);
 
   const total = sumTotals(rows.map((r) => r.totals));
 
-  const setStatus = (ids: string[], to: DeliveryStatus) => {
-    setOverrides((o) => ({ ...o, ...Object.fromEntries(ids.map((id) => [id, to])) }));
-    toast({ tone: "success", title: to === "paused" ? `${ids.length} campanha(s) pausada(s)` : `${ids.length} campanha(s) ativada(s)`, description: "Alteração local de demonstração — nenhuma plataforma foi acionada.", action: { label: "Desfazer", onClick: () => setOverrides((o) => { const n = { ...o }; ids.forEach((id) => delete n[id]); return n; }) } });
+  const setStatus = async (ids: string[], to: DeliveryStatus) => {
+    const previous = Object.fromEntries(ids.map((id) => [id, data.campaigns.find((c) => c.id === id)?.status ?? "paused"])) as Record<string, DeliveryStatus>;
+    if (data.mode === "supabase") {
+      const err = await data.setCampaignStatus(ids, to);
+      if (err) { toast({ tone: "error", title: "Não foi possível alterar", description: err }); return; }
+    } else {
+      setOverrides((o) => ({ ...o, ...Object.fromEntries(ids.map((id) => [id, to])) }));
+    }
+    const undo = async () => {
+      if (data.mode === "supabase") { for (const id of ids) await data.setCampaignStatus([id], previous[id]); }
+      else setOverrides((o) => { const n = { ...o }; ids.forEach((id) => delete n[id]); return n; });
+    };
+    toast({ tone: "success", title: to === "paused" ? `${ids.length} campanha(s) pausada(s)` : `${ids.length} campanha(s) ativada(s)`, description: data.mode === "supabase" ? "Status salvo no banco. A plataforma de anúncios só é acionada com integração." : "Alteração local de demonstração — nenhuma plataforma foi acionada.", action: { label: "Desfazer", onClick: () => void undo() } });
     setSelected(new Set());
   };
 
@@ -134,12 +147,13 @@ export default function Campaigns({ variant }: { variant?: { title: string; desc
   return (
     <Page>
       <PageHeader
-        meta={<DemoBadge />}
+        meta={<DemoBadge liveable />}
         title={<span className="inline-flex items-center gap-3">{variant?.title ?? "Campanhas"} <Count>{rows.length}</Count></span>}
         description={variant?.description ?? "Campanhas, conjuntos e anúncios em uma única tabela. Expanda uma linha para ver os níveis abaixo."}
         actions={<><GlobalFilters /><Button variant="primary" icon={<Plus />} onClick={() => setCreateOpen(true)}>Nova campanha</Button></>}
       />
 
+      <DataGate>
       <section className="panel flex min-h-[420px] flex-col overflow-hidden">
         {selected.size > 0 ? (
           <TableToolbar className="bg-accent-tint" actions={<Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>Limpar seleção</Button>}>
@@ -193,6 +207,8 @@ export default function Campaigns({ variant }: { variant?: { title: string; desc
           }
         />
       </section>
+
+      </DataGate>
 
       <MetricConfigurator open={cfgOpen} onOpenChange={setCfgOpen} title="Colunas da tabela" icon={<Columns3 />}
         description="A ordem de cima para baixo é a ordem da esquerda para a direita. Investimento é fixo."
