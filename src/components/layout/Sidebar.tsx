@@ -48,6 +48,7 @@ export function Sidebar({ collapsed, onToggleCollapsed, onNavigate, mobile }: { 
   const ws = useWorkspace();
   const live = auth.mode === "supabase";
   const userName = live ? (ws.profileName || auth.user?.email || "Usuário") : "Gestor Demo";
+  const wsName = live ? (ws.current?.name ?? "Meu espaço") : "Loja Aurora";
   const roleLabel = live ? `${ws.current?.name ?? "Sem espaço"} · ${ws.current?.role === "owner" ? "Proprietário" : ws.current?.role === "admin" ? "Administrador" : "Membro"}` : "Administrador";
   const { pathname, search } = useLocation();
   const consoleMode = isConsole(pathname);
@@ -78,10 +79,10 @@ export function Sidebar({ collapsed, onToggleCollapsed, onNavigate, mobile }: { 
           <Menu>
             <MenuTrigger asChild>
               <button type="button" className="flex w-full items-center gap-2.5 rounded-md border border-line bg-surface-2 p-2 text-left transition-colors hover:border-line-strong">
-                <span className="grid size-7 place-items-center rounded-sm bg-series-4 text-[11px] font-extrabold text-white">AU</span>
+                <span className="grid size-7 place-items-center rounded-sm bg-series-4 text-[11px] font-extrabold text-white">{wsName.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase()}</span>
                 <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate text-secondary font-bold">Loja Aurora</span>
-                  <span className="truncate font-mono text-[10px] uppercase tracking-[0.06em] text-text-dim">{consoleMode ? "Console" : "Estúdio"} · demo</span>
+                  <span className="truncate text-secondary font-bold">{wsName}</span>
+                  <span className="truncate font-mono text-[10px] uppercase tracking-[0.06em] text-text-dim">{consoleMode ? "Console" : "Estúdio"}{live ? "" : " · demo"}</span>
                 </span>
                 <ChevronsUpDown className="size-4 text-text-dim" />
               </button>

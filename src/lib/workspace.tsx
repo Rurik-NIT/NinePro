@@ -23,21 +23,23 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [profileName, setProfileName] = useState("");
   const [loading, setLoading] = useState(mode === "supabase");
 
+  const userId = user?.id;
+  const userEmail = user?.email;
   const reload = useCallback(async () => {
-    if (!supabase || !user) { setWorkspaces([]); setLoading(false); return; }
+    if (!supabase || !userId) { setWorkspaces([]); setLoading(false); return; }
     setLoading(true);
     const [{ data: rows }, { data: prof }] = await Promise.all([
-      supabase.from("workspace_members").select("role, workspaces(id, name, slug)").eq("user_id", user.id),
-      supabase.from("profiles").select("full_name").eq("id", user.id).maybeSingle(),
+      supabase.from("workspace_members").select("role, workspaces(id, name, slug)").eq("user_id", userId),
+      supabase.from("profiles").select("full_name").eq("id", userId).maybeSingle(),
     ]);
     const list = (rows ?? []).flatMap((r) => {
       const w = r.workspaces as unknown as { id: string; name: string; slug: string } | null;
       return w ? [{ ...w, role: r.role as Workspace["role"] }] : [];
     });
     setWorkspaces(list);
-    setProfileName(prof?.full_name ?? user.email ?? "");
+    setProfileName(prof?.full_name ?? userEmail ?? "");
     setLoading(false);
-  }, [user]);
+  }, [userId, userEmail]);
 
   useEffect(() => { void reload(); }, [reload]);
 

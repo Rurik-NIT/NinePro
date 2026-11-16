@@ -11,11 +11,11 @@ import { Link } from "react-router-dom";
  * Retorna null quando há dados (ou no modo demonstração) — a tela segue normal.
  */
 export function DataGate({ children }: { children: React.ReactNode }) {
-  const { mode, loading, error, isEmpty, seedDemo, refresh } = useData();
+  const { mode, loading, error, isEmpty, seedDemo, refresh, campaigns } = useData();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   if (mode === "demo") return <>{children}</>;
-  if (loading && isEmpty === false && error === null) return <>{children}</>;
+  if (loading && campaigns.length > 0) return <>{children}</>;
   if (loading) return <LoadingState label="Carregando dados do seu espaço…" />;
   if (error) return <div className="panel"><ErrorState title="Não foi possível carregar os dados" description={error} onRetry={() => void refresh()} /></div>;
   if (isEmpty) {

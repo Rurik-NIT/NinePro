@@ -73,7 +73,9 @@ async function sha256Hex(s: string) {
 
 /* ---------------------------------------------------------------- provider */
 export function DataProvider({ children }: { children: ReactNode }) {
-  const { mode, user } = useAuth();
+  const { mode, user: authUser } = useAuth();
+  const userId = authUser?.id;
+  const user = useMemo(() => (userId ? { id: userId } : null), [userId]);
   const { current } = useWorkspace();
   const ws = current?.id;
   const [loading, setLoading] = useState(mode === "supabase");

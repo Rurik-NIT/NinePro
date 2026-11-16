@@ -153,7 +153,7 @@ function RequireAuth({ children }: { children: JSX.Element }) {
   if (mode === "demo") return children;
   if (loading) return <LoadingState label="Verificando sessão…" className="h-full" />;
   if (!session) return S(<Login />);
-  if (wsLoading) return <LoadingState label="Carregando espaço de trabalho…" className="h-full" />;
+  if (wsLoading && !current) return <LoadingState label="Carregando espaço de trabalho…" className="h-full" />;
   if (!current) return <LoadingState label="Preparando seu espaço de trabalho…" className="h-full" />;
   return children;
 }
