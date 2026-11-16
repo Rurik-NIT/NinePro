@@ -24,6 +24,7 @@ const Settings = lazy(() => import("@/pages/Settings"));
 const DesignSystem = lazy(() => import("@/pages/DesignSystem"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 const Login = lazy(() => import("@/pages/auth/Login"));
+const Admin = lazy(() => import("@/pages/admin/Admin"));
 const Builder = lazy(() => import("@/pages/automations/Builder"));
 
 const conv = () => import("@/pages/ads/Conversions");
@@ -121,6 +122,7 @@ const router = createBrowserRouter([
       { path: "saldo", element: <Navigate to="/faturamento" replace /> },
       { path: "configuracoes", element: S(<Settings />) },
       { path: "design-system", element: S(<DesignSystem />) },
+      { path: "admin", element: S(<Admin />) },
 
       /* Produto Console */
       { path: "console", element: N(cons, "ConsolePlatforms") },

@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, ChevronsUpDown, LogOut, Monitor, Moon, PanelLeftClose, PanelLeftOpen, Settings, Sun, UserRound } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronsUpDown, LogOut, ShieldCheck, Monitor, Moon, PanelLeftClose, PanelLeftOpen, Settings, Sun, UserRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/cn";
@@ -159,6 +159,7 @@ export function Sidebar({ collapsed, onToggleCollapsed, onNavigate, mobile }: { 
             <MenuRadioGroup value={preference} onValueChange={(v) => setPreference(v as ThemePreference)}
               options={themeOptions.map((o) => ({ value: o.value, label: <span className="flex items-center gap-2"><o.icon className="size-4 text-text-muted" />{o.label}</span> }))} />
             <MenuSeparator />
+            {live && ws.isPlatformAdmin && <MenuItem icon={<ShieldCheck />} onSelect={() => { navigate("/admin"); onNavigate?.(); }}>Painel admin</MenuItem>}
             <MenuItem icon={<UserRound />} onSelect={() => { navigate("/configuracoes?secao=perfil"); onNavigate?.(); }}>Perfil</MenuItem>
             <MenuItem icon={<Settings />} shortcut="G S" onSelect={() => { navigate("/configuracoes?secao=uso"); onNavigate?.(); }}>Uso e faturamento</MenuItem>
             <MenuSeparator />

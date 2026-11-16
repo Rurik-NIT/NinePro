@@ -7,6 +7,8 @@ import { SegmentedControl } from "@/components/ui/Tabs";
 import { InlineNotice } from "@/components/feedback/States";
 import { Logo } from "@/components/layout/Logo";
 
+const ALLOW_SIGNUP = import.meta.env.VITE_ALLOW_SIGNUP === "true";
+
 export default function Login() {
   const { signIn, signUp, resetPassword } = useAuth();
   const [mode, setMode] = useState<"entrar" | "criar" | "recuperar">("entrar");
@@ -44,9 +46,9 @@ export default function Login() {
         <form onSubmit={submit} className="panel flex flex-col gap-5 p-6" noValidate>
           <div className="flex flex-col gap-1">
             <h1 className="t-headline">{mode === "entrar" ? "Entrar no NinePro" : mode === "criar" ? "Criar sua conta" : "Recuperar acesso"}</h1>
-            <p className="t-secondary">{mode === "criar" ? "Seu espaço de trabalho é criado automaticamente." : mode === "recuperar" ? "Enviamos um link para você definir uma nova senha." : "Gestão de tráfego pago e operação de campanhas."}</p>
+            <p className="t-secondary">{mode === "criar" ? "Seu espaço de trabalho é criado automaticamente." : mode === "recuperar" ? "Enviamos um link para você definir uma nova senha." : (ALLOW_SIGNUP ? "Gestão de tráfego pago e operação de campanhas." : "Acesso por convite. Peça sua conta ao administrador.")}</p>
           </div>
-          {mode !== "recuperar" && (
+          {mode !== "recuperar" && ALLOW_SIGNUP && (
             <SegmentedControl ariaLabel="Acesso" value={mode} onValueChange={(v) => { setMode(v); setError(null); setInfo(null); }}
               options={[{ value: "entrar", label: "Entrar", icon: <LogIn /> }, { value: "criar", label: "Criar conta", icon: <UserPlus /> }]} />
           )}

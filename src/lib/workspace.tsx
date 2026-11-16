@@ -8,6 +8,8 @@ interface WorkspaceCtx {
   workspaces: Workspace[];
   current: Workspace | null;
   profileName: string;
+  /** Super admin da plataforma (tabela platform_admins). */
+  isPlatformAdmin: boolean;
   select: (id: string) => void;
   rename: (name: string) => Promise<string | null>;
   reload: () => Promise<void>;
@@ -21,6 +23,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(() => { try { return localStorage.getItem(KEY); } catch { return null; } });
   const [profileName, setProfileName] = useState("");
+  const [isPlatformAdmin, setIsPlatformAdmin] = useState(false);
   const [loading, setLoading] = useState(mode === "supabase");
 
   const userId = user?.id;
@@ -28,10 +31,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const reload = useCallback(async () => {
     if (!supabase || !userId) { setWorkspaces([]); setLoading(false); return; }
     setLoading(true);
-    const [{ data: rows }, { data: prof }] = await Promise.all([
+    const [{ data: rows }, { data: prof }, { data: adm }] = await Promise.all([
       supabase.from("workspace_members").select("role, workspaces(id, name, slug)").eq("user_id", userId),
       supabase.from("profiles").select("full_name").eq("id", userId).maybeSingle(),
+      supabase.from("platform_admins").select("user_id").eq("user_id", userId).maybeSingle(),
     ]);
+    setIsPlatformAdmin(!!adm);
     const list = (rows ?? []).flatMap((r) => {
       const w = r.workspaces as unknown as { id: string; name: string; slug: string } | null;
       return w ? [{ ...w, role: r.role as Workspace["role"] }] : [];
@@ -52,7 +57,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return error?.message ?? null;
   }, [current, reload]);
 
-  const value = useMemo(() => ({ loading, workspaces, current, profileName, select, rename, reload }), [loading, workspaces, current, profileName, select, rename, reload]);
+  const value = useMemo(() => ({ loading, workspaces, current, profileName, isPlatformAdmin, select, rename, reload }), [loading, workspaces, current, profileName, isPlatformAdmin, select, rename, reload]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
