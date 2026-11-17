@@ -217,7 +217,7 @@ export async function handleConnect(req: Request, env: Env): Promise<Response> {
       const mode: AuthMode = st.mode === "app_proprio" ? "app_proprio" : "app_ninepro";
       const app = mode === "app_proprio" ? await loadOwnApp(sb, env, st.ws, platform) : prov.nineproApp(env);
       if (!app) throw new Error("As credenciais do app não foram encontradas. Informe de novo.");
-      const ex = await prov.exchangeCode(env, app, code, redirectUri(req, env));
+      const ex = await prov.exchangeCode(env, app, code, redirectUri(req, env), state);
       await saveConnection(sb, env, platform, { ws: st.ws, uid: st.uid, mode, appId: mode === "app_proprio" ? app.appId : null, ...ex });
       return back("resultado=conectado");
     } catch (e) {

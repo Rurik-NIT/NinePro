@@ -34,7 +34,7 @@ export function ConnectModal({ platform, open, onOpenChange, ws, call, onConnect
     setError(null); setValues({}); setOpts(null);
     call<Options>({ action: "options", workspaceId: ws, platform }).then((o) => {
       setOpts(o);
-      setMode(o.ninepro ? "app_ninepro" : "app_proprio");
+      setMode(o.ninepro ? "app_ninepro" : o.appFields.length ? "app_proprio" : "token");
       if (o.ownAppId) setValues({ appId: o.ownAppId });
     }).catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, [open, ws, call, platform]);
@@ -65,7 +65,7 @@ export function ConnectModal({ platform, open, onOpenChange, ws, call, onConnect
 
   const choices: { id: Mode; icon: JSX.Element; title: string; desc: string; show: boolean }[] = [
     { id: "app_ninepro", icon: <LogIn />, title: guide.loginLabel, desc: "O jeito mais simples: entre com a sua conta e autorize o NinePro.", show: !!opts?.ninepro },
-    { id: "app_proprio", icon: <AppWindow />, title: "App da sua empresa", desc: guide.appDesc, show: true },
+    { id: "app_proprio", icon: <AppWindow />, title: "App da sua empresa", desc: guide.appDesc, show: (opts?.appFields.length ?? 1) > 0 },
     { id: "token", icon: <KeyRound />, title: "Token de acesso", desc: guide.tokenDesc, show: true },
   ];
   const shown = choices.filter((c) => c.show);

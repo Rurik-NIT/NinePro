@@ -1,5 +1,5 @@
 /** Textos de ajuda de cada plataforma no modal de conexão (o que fazer em cada site). */
-export type PlatformKey = "meta" | "google" | "tiktok" | "linkedin" | "whatsapp" | "instagram";
+export type PlatformKey = "meta" | "google" | "tiktok" | "linkedin" | "whatsapp" | "instagram" | "facebook" | "threads" | "linkedin_social" | "youtube" | "tiktok_social" | "x" | "telegram" | "discord" | "bluesky";
 
 interface Guide {
   label: string;
@@ -112,5 +112,107 @@ export const PLATFORM_GUIDE: Record<PlatformKey, Guide> = {
       "Depois de conectar, cole a URL de webhook e o token de verificação (aparecem no cartão) em Configurar webhooks.",
     ],
     note: () => "Com o app em modo de desenvolvimento, conectam as contas que têm papel de testador no app. Para as suas próprias contas, isso já basta.",
+  },
+  facebook: {
+    label: "Facebook", site: "o Facebook", loginLabel: "Entrar com Facebook",
+    appDesc: "O app da sua empresa no Meta for Developers (o mesmo dos anúncios serve).",
+    tokenDesc: "Token de usuário ou de Página com permissão de publicar.",
+    appSteps: [
+      "No seu app em developers.facebook.com › Login do Facebook › Configurações, cole o endereço abaixo em URIs de redirecionamento.",
+      "Em Casos de uso, adicione Gerenciar tudo na sua Página (pages_show_list, pages_read_engagement e pages_manage_posts).",
+      "Copie o ID do app e a Chave secreta em Configurações do app › Básico.",
+    ],
+    tokenSteps: [
+      "Abra o Explorador da Graph API, escolha seu app e marque pages_show_list, pages_read_engagement e pages_manage_posts.",
+      "Gere o token de usuário (ou escolha a Página para um token de Página) e cole abaixo.",
+    ],
+    note: () => "Em modo de desenvolvimento, publicam as Páginas de quem tem papel no app. Para as suas Páginas, isso já basta.",
+  },
+  threads: {
+    label: "Threads", site: "o Threads", loginLabel: "Entrar com Threads",
+    appDesc: "App da Meta com o caso de uso Acessar a API do Threads.",
+    tokenDesc: "Token do Threads gerado no painel do app. Renovado sozinho.",
+    appSteps: [
+      "No seu app em developers.facebook.com › Casos de uso › Acessar a API do Threads › Configurações, cole o endereço abaixo em URLs de retorno de chamada.",
+      "Marque threads_basic e threads_content_publish.",
+      "Copie o ID e a Chave secreta do app do Threads (aparecem na mesma tela).",
+    ],
+    tokenSteps: [
+      "Em Funções do app, adicione sua conta do Threads como testadora e aceite o convite no Threads (Configurações › Conta › Permissões do site).",
+      "Gere o token no Explorador da Graph API (graph.threads.net) com threads_basic e threads_content_publish.",
+    ],
+  },
+  linkedin_social: {
+    label: "LinkedIn", site: "o LinkedIn", loginLabel: "Entrar com LinkedIn",
+    appDesc: "App no LinkedIn Developers com Share on LinkedIn (perfil) e, se aprovado, Community Management API (Páginas).",
+    tokenDesc: "Token gerado no LinkedIn Developers. Vale 60 dias.",
+    appSteps: [
+      "No LinkedIn Developers, abra o app › Products e adicione Sign In with LinkedIn using OpenID Connect e Share on LinkedIn.",
+      "Em Auth › Authorized redirect URLs, cole o endereço abaixo.",
+      "Copie o Client ID e o Client secret.",
+      "Para publicar em Páginas da empresa, peça a Community Management API (aprovação do LinkedIn).",
+    ],
+    tokenSteps: ["No LinkedIn Developers › Token generator, escolha o app e marque openid, profile e w_member_social.", "Copie o token gerado. Ele vale 60 dias."],
+  },
+  youtube: {
+    label: "YouTube", site: "o Google", loginLabel: "Entrar com Google",
+    appDesc: "Cliente OAuth do Google Cloud com a YouTube Data API v3 ativada.",
+    tokenDesc: "Cliente OAuth e um refresh token gerado por você.",
+    appSteps: [
+      "No Google Cloud › APIs e serviços, ative a YouTube Data API v3.",
+      "Em Credenciais, crie um ID do cliente OAuth do tipo Aplicativo da Web e cole o endereço abaixo em URIs de redirecionamento.",
+      "Na Tela de consentimento OAuth, adicione o seu e-mail como usuário de teste.",
+    ],
+    tokenSteps: ["No OAuth Playground (engrenagem › Use your own OAuth credentials), use o seu cliente.", "Autorize o escopo youtube.upload e troque o código pelo refresh token."],
+    note: () => "Enquanto o projeto do Google não passa pela auditoria da API do YouTube, os vídeos enviados ficam privados.",
+  },
+  tiktok_social: {
+    label: "TikTok", site: "o TikTok", loginLabel: "Entrar com TikTok",
+    appDesc: "App no TikTok for Developers com Login Kit e Content Posting API (não é o app do TikTok Ads).",
+    tokenDesc: "Client key, client secret e um refresh token do seu app.",
+    appSteps: [
+      "Em developers.tiktok.com, crie o app e adicione os produtos Login Kit e Content Posting API (com Direct Post).",
+      "Em Login Kit › Redirect URI, cole o endereço abaixo.",
+      "Marque os escopos user.info.basic, video.publish e video.upload e copie o Client key e o Client secret.",
+    ],
+    tokenSteps: ["Faça o login OAuth pelo seu app e copie o refresh token (vale 365 dias).", "Informe também o Client key e o Client secret."],
+    note: () => "Até o TikTok auditar o app, as publicações saem como privadas e só contas adicionadas como testadoras conectam.",
+  },
+  x: {
+    label: "X (Twitter)", site: "o X", loginLabel: "Entrar com X",
+    appDesc: "App no X Developer Portal com autenticação OAuth 2.0 (leitura e escrita).",
+    tokenDesc: "Client ID, client secret e um refresh token do seu app.",
+    appSteps: [
+      "Em developer.x.com › seu app › User authentication settings, ative OAuth 2.0, tipo Web App, permissão Read and write.",
+      "Em Callback URI, cole o endereço abaixo.",
+      "Em Keys and tokens, copie o OAuth 2.0 Client ID e o Client Secret.",
+    ],
+    tokenSteps: ["Faça o login OAuth 2.0 do seu app com o escopo offline.access e copie o refresh token.", "Informe também o Client ID e o Client secret."],
+    note: () => "O plano gratuito da API do X permite um número limitado de publicações por mês.",
+  },
+  telegram: {
+    label: "Telegram", site: "o Telegram", loginLabel: "Token do bot",
+    appDesc: "",
+    tokenDesc: "Token do seu bot e os canais ou grupos onde ele publica.",
+    appSteps: [],
+    tokenSteps: [
+      "No Telegram, fale com @BotFather, envie /newbot e copie o token.",
+      "No seu canal: Administradores › Adicionar administrador › escolha o bot e deixe Publicar mensagens marcado.",
+      "Informe o @ do canal (ou o ID -100…) abaixo, um por linha.",
+    ],
+  },
+  discord: {
+    label: "Discord", site: "o Discord", loginLabel: "Webhook",
+    appDesc: "",
+    tokenDesc: "URL do webhook de cada canal.",
+    appSteps: [],
+    tokenSteps: ["No canal do servidor: Editar canal › Integrações › Webhooks › Novo webhook.", "Copie a URL do webhook e cole abaixo. Um por linha para vários canais."],
+  },
+  bluesky: {
+    label: "Bluesky", site: "o Bluesky", loginLabel: "Senha de app",
+    appDesc: "",
+    tokenDesc: "Seu usuário e uma senha de app (não a senha da conta).",
+    appSteps: [],
+    tokenSteps: ["No Bluesky: Configurações › Privacidade e segurança › Senhas de app › Adicionar senha de app.", "Copie a senha gerada e informe abaixo com o seu usuário."],
   },
 };

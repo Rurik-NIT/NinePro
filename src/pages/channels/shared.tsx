@@ -1,3 +1,4 @@
+import type { ChannelKind } from "@/config/networks";
 import { Send } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
@@ -22,17 +23,19 @@ export const TEMPLATE_STATUS: Record<string, { label: string; tone: "positive" |
 export const CATEGORY_LABEL: Record<string, string> = { MARKETING: "Marketing", UTILITY: "Utilidade", AUTHENTICATION: "Autenticação" };
 
 /** Canais conectados do espaço atual (com recarga). */
-export function useChannelAccounts(kind?: "whatsapp" | "instagram") {
+/** Contas conectadas. Sem tipo: só os canais de atendimento (WhatsApp e Instagram). */
+export function useChannelAccounts(kind?: ChannelKind | ChannelKind[]) {
   const { current } = useWorkspace();
   const ws = current?.id;
   const [accounts, setAccounts] = useState<ChannelAccount[] | null>(null);
+  const kindKey = Array.isArray(kind) ? kind.join(",") : kind ?? "";
   const reload = useCallback(async () => {
     if (!supabase || !ws) return;
     let q = supabase.from("channel_accounts").select(CHANNEL_ACCOUNT_COLS).eq("workspace_id", ws).not("connection_id", "is", null).order("name");
-    if (kind) q = q.eq("kind", kind);
+    q = Array.isArray(kind) ? q.in("kind", kind) : kind ? q.eq("kind", kind) : q.in("kind", ["whatsapp", "instagram"]);
     const { data } = await q;
     setAccounts((data as ChannelAccount[] | null) ?? []);
-  }, [ws, kind]);
+  }, [ws, kindKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { void reload(); }, [reload]);
   return { accounts, reload, ws, admin: current?.role === "owner" || current?.role === "admin" };
 }

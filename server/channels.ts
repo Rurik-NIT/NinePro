@@ -8,7 +8,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadAuth, loadOwnApp, serviceClient } from "./connections.js";
 import { encryptToken } from "./crypto.js";
-import { CHANNELS, isChannel, PlatformError, type ChannelId, type StoredAuth } from "./platforms/index.js";
+import { CHANNELS, graphemes, isChannel, isVideoUrl, PlatformError, PUBLISHABLE, type ChannelId, type StoredAuth } from "./platforms/index.js";
 import * as IG from "./platforms/instagram.js";
 import * as WA from "./platforms/whatsapp.js";
 import type { WebhookEvent } from "./events.js";
@@ -20,7 +20,8 @@ const FRIENDLY = "Não foi possível concluir agora. Tente de novo em alguns min
 const json = (status: number, data: unknown) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
 const now = () => new Date().toISOString();
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const LABEL: Record<ChannelId, string> = { whatsapp: "WhatsApp", instagram: "Instagram" };
+const LABEL = Object.fromEntries(Object.entries(CHANNELS).map(([k, v]) => [k, v.label])) as Record<ChannelId, string>;
+export const channelLabel = (k: ChannelId) => LABEL[k] ?? k;
 const DAY = 86_400_000;
 
 interface Account { id: string; workspace_id: string; connection_id: string | null; kind: ChannelId; external_id: string; parent_external_id: string | null; name: string }
@@ -105,7 +106,8 @@ export async function syncChannel(sb: SupabaseClient, env: Env, conn: { id: stri
       accounts.push(row as Account);
     }
     detail.contas = accounts.length;
-    if (!found.length) warnings.push(kind === "whatsapp" ? "Nenhum número encontrado na conta do WhatsApp Business." : "Nenhuma conta do Instagram encontrada.");
+    if (!found.length) warnings.push(kind === "whatsapp" ? "Nenhum número encontrado na conta do WhatsApp Business." : `Nenhuma conta do ${LABEL[kind]} encontrada.`);
+    for (const a of found) if (a.status !== "ativo" && a.detail?.aviso) warnings.push(`${a.name}: ${String(a.detail.aviso)}`);
     const sub = await prov.subscribe(env, auth, found);
     if (sub) warnings.push(`Webhooks: ${sub}`);
 
@@ -126,7 +128,7 @@ export async function syncChannel(sb: SupabaseClient, env: Env, conn: { id: stri
         } catch (e) { warnings.push(`Modelos: ${msg(e)}`); }
       }
       detail.modelos = total;
-    } else {
+    } else if (kind === "instagram") {
       for (const acc of accounts) {
         const t = tokenOf(auth);
         try { detail.comentarios = await backfillComments(sb, env, t, acc); } catch (e) { warnings.push(`Comentários: ${msg(e)}`); }
@@ -488,47 +490,91 @@ ${button.label}: ${button.url}`;
   return { ok: true };
 }
 
-/** Publica uma publicação nas contas do Instagram marcadas nela. */
+/* ------------------------------------------------------------------ publicação em várias redes */
+export interface PostDraft { text: string; title?: string; custom?: Record<string, string>; mediaUrls: string[]; mediaType?: string }
+const mediaOf = (urls: string[]) => urls.map((url) => ({ url, type: (isVideoUrl(url) ? "video" : "image") as "video" | "image" }));
+
+/** Confere o post contra os limites de cada rede escolhida. Devolve problemas (bloqueiam) e avisos. */
+export function checkPost(kinds: ChannelId[], d: PostDraft) {
+  const problemas: string[] = []; const avisos: string[] = [];
+  const media = mediaOf(d.mediaUrls);
+  const imgs = media.filter((m) => m.type === "image").length, vids = media.filter((m) => m.type === "video").length;
+  for (const kind of [...new Set(kinds)]) {
+    const lim = CHANNELS[kind]?.limits; const name = LABEL[kind] ?? kind;
+    if (!lim) { problemas.push(`${name}: publicação não disponível.`); continue; }
+    const text = (d.custom?.[kind] ?? d.text).trim();
+    const n = graphemes(text);
+    if (n > lim.text) (kind === "x" ? avisos : problemas).push(`${name}: o texto tem ${n} caracteres (máximo ${lim.text}${kind === "x" ? ", exceto contas Premium" : ""}).`);
+    if (!media.length && !lim.textOnly) problemas.push(`${name}: precisa de ${lim.needsMedia === "video" ? "um vídeo" : "foto ou vídeo"}.`);
+    if (!media.length && lim.textOnly && !text) problemas.push(`${name}: escreva um texto ou adicione mídia.`);
+    if (lim.needsMedia === "video" && !vids) problemas.push(`${name}: precisa de um vídeo.`);
+    if (imgs > lim.images) (lim.images ? avisos : problemas).push(lim.images ? `${name}: só as primeiras ${lim.images} imagens serão usadas.` : `${name}: não aceita imagens, só vídeo.`);
+    if (vids > lim.videos) problemas.push(`${name}: aceita no máximo ${lim.videos} vídeo(s).`);
+    if (imgs && vids && !lim.mixed) problemas.push(`${name}: não mistura fotos e vídeo na mesma publicação.`);
+    if (lim.needsTitle && !(d.title?.trim() || text.split("\n")[0])) problemas.push(`${name}: informe o título.`);
+    if (lim.titleMax && d.title && graphemes(d.title) > lim.titleMax) problemas.push(`${name}: título com mais de ${lim.titleMax} caracteres.`);
+  }
+  return { ok: !problemas.length, problemas, avisos };
+}
+
+type PostResult = Record<string, { id?: string; permalink?: string | null; erro?: string; aviso?: string; conta: string; rede?: string }>;
+/** Publica nas contas marcadas. Numa nova tentativa, pula as contas em que já publicou. */
 export async function publishPost(sb: SupabaseClient, env: Env, postId: string) {
-  const { data: post } = await sb.from("posts").select("id, workspace_id, content, channel_account_ids, media_urls, media_type, attempts").eq("id", postId).maybeSingle();
+  const { data: post } = await sb.from("posts").select("*").eq("id", postId).maybeSingle();
   if (!post) throw new PlatformError("Publicação não encontrada.");
   const ws = post.workspace_id as string;
   const ids = (post.channel_account_ids as string[]) ?? [];
-  if (!ids.length) throw new PlatformError("Escolha ao menos uma conta do Instagram.");
-  const { data: accs } = await sb.from("channel_accounts").select(ACCOUNT_COLS).eq("workspace_id", ws).in("id", ids);
-  const result: Record<string, { id?: string; permalink?: string | null; erro?: string; conta: string }> = {};
-  for (const acc of (accs ?? []) as Account[]) {
+  if (!ids.length) throw new PlatformError("Escolha ao menos uma conta.");
+  const { data: accs } = await sb.from("channel_accounts").select(`${ACCOUNT_COLS}, detail`).eq("workspace_id", ws).in("id", ids);
+  const prev = (post.result ?? {}) as PostResult;
+  const result: PostResult = {};
+  const urls = (post.media_urls as string[]) ?? [];
+  const custom = (post.custom ?? {}) as Record<string, string>;
+  for (const acc of (accs ?? []) as (Account & { detail: Json })[]) {
+    if (prev[acc.id]?.id) { result[acc.id] = prev[acc.id]; continue; }
+    const text = String(custom[acc.kind] ?? post.content ?? "");
     try {
-      if (acc.kind !== "instagram") throw new PlatformError("Publicação só está disponível para o Instagram.");
-      const token = tokenOf(await channelAuth(sb, env, "instagram", acc.connection_id));
-      const r = await IG.igPublish(env, token, acc.external_id, { type: post.media_type as "IMAGE", urls: (post.media_urls as string[]) ?? [], caption: post.content as string });
-      result[acc.id] = { id: r.id, permalink: r.permalink, conta: acc.name };
-    } catch (e) { result[acc.id] = { erro: msg(e), conta: acc.name }; }
+      if (acc.kind === "instagram") {
+        const token = tokenOf(await channelAuth(sb, env, "instagram", acc.connection_id));
+        const r = await IG.igPublish(env, token, acc.external_id, { type: post.media_type as "IMAGE", urls, caption: text });
+        result[acc.id] = { id: r.id, permalink: r.permalink, conta: acc.name, rede: "Instagram" };
+      } else {
+        const prov = CHANNELS[acc.kind];
+        if (!prov?.publish) throw new PlatformError(`Publicação não disponível para ${LABEL[acc.kind] ?? acc.kind}.`);
+        const auth = await channelAuth(sb, env, acc.kind, acc.connection_id);
+        const r = await prov.publish(env, auth, { externalId: acc.external_id, name: acc.name, detail: acc.detail ?? {} }, { text, title: (post.title as string | null) ?? undefined, media: mediaOf(urls), format: post.media_type as string });
+        result[acc.id] = { id: r.id, permalink: r.permalink, conta: acc.name, rede: prov.label, ...(r.aviso ? { aviso: r.aviso } : {}) };
+      }
+    } catch (e) { result[acc.id] = { erro: msg(e), conta: acc.name, rede: LABEL[acc.kind] ?? acc.kind }; }
   }
-  const ok = Object.values(result).filter((r) => r.id).length;
-  const errors = Object.values(result).filter((r) => r.erro).map((r) => `${r.conta}: ${r.erro}`);
-  const status = ok ? "publicada" : "falhou";
-  await sb.from("posts").update({ status, result, error: errors.join(" · ") || null, published_at: ok ? now() : null, attempts: ((post.attempts as number) ?? 0) + 1, updated_at: now() }).eq("id", postId);
-  await dispatchEvent(sb, ws, (ok ? "publicacao.publicada" : "publicacao.falhou") as WebhookEvent, { publicacao_id: postId, resultado: result });
+  const all = Object.values(result);
+  const ok = all.filter((r) => r.id).length;
+  const errors = all.filter((r) => r.erro).map((r) => `${r.rede ? `${r.rede} ` : ""}${r.conta}: ${r.erro}`);
+  const status = !ok ? "falhou" : errors.length ? "parcial" : "publicada";
+  await sb.from("posts").update({ status, result, error: errors.join(" · ") || null, published_at: ok ? (post.published_at ?? now()) : null, attempts: ((post.attempts as number) ?? 0) + 1, updated_at: now() }).eq("id", postId);
+  await dispatchEvent(sb, ws, (ok ? "publicacao.publicada" : "publicacao.falhou") as WebhookEvent, { publicacao_id: postId, status, resultado: result });
   return { ok: ok > 0, status, result, error: errors[0] ?? null };
 }
 
-/** Cria ou altera uma publicação (rascunho, agendada ou para publicar agora). */
+/** Cria ou altera uma publicação (rascunho, agendada ou para publicar agora) em uma ou várias redes. */
 export async function savePost(ctx: ChannelCtx, p: Json) {
-  const content = String(p.content ?? "").slice(0, 2200);
-  const accountIds = (Array.isArray(p.accountIds) ? p.accountIds : []).map(String).slice(0, 20);
-  const mediaUrls = (Array.isArray(p.mediaUrls) ? p.mediaUrls : []).map(String).filter((u) => /^https:\/\//.test(u)).slice(0, 10);
-  const mediaType = ["IMAGE", "VIDEO", "REELS", "CAROUSEL", "STORIES"].includes(String(p.mediaType)) ? String(p.mediaType) : mediaUrls.length > 1 ? "CAROUSEL" : "IMAGE";
+  const content = String(p.content ?? "").slice(0, 63206);
+  const title = p.title ? String(p.title).slice(0, 255) : null;
+  const custom = Object.fromEntries(Object.entries((p.custom ?? {}) as Json).filter(([k, v]) => isChannel(k) && typeof v === "string" && v.trim()).map(([k, v]) => [k, String(v).slice(0, 63206)]));
+  const accountIds = (Array.isArray(p.accountIds) ? p.accountIds : []).map(String).slice(0, 50);
+  const mediaUrls = (Array.isArray(p.mediaUrls) ? p.mediaUrls : []).map(String).filter((u) => /^https:\/\//.test(u)).slice(0, 35);
+  const mediaType = ["IMAGE", "VIDEO", "REELS", "CAROUSEL", "STORIES"].includes(String(p.mediaType)) ? String(p.mediaType) : mediaUrls.length > 1 ? "CAROUSEL" : mediaUrls.some(isVideoUrl) ? "REELS" : "IMAGE";
   const when = p.scheduledAt ? new Date(String(p.scheduledAt)) : null;
   const mode = p.mode === "agora" ? "agora" : p.mode === "agendar" ? "agendar" : "rascunho";
+  const { data: accs } = accountIds.length ? await ctx.sb.from("channel_accounts").select("id, name, kind").eq("workspace_id", ctx.ws).in("id", accountIds).in("kind", PUBLISHABLE) : { data: [] as { id: string; name: string; kind: ChannelId }[] };
   if (mode !== "rascunho") {
-    if (!accountIds.length) throw new PlatformError("Escolha ao menos uma conta do Instagram.");
-    if (!mediaUrls.length) throw new PlatformError("Adicione ao menos uma imagem ou vídeo. O Instagram não publica só texto.");
+    if (!accs?.length) throw new PlatformError("Escolha ao menos uma conta para publicar.");
+    const chk = checkPost(accs.map((a) => a.kind as ChannelId), { text: content, title: title ?? undefined, custom, mediaUrls, mediaType });
+    if (!chk.ok) throw new PlatformError(chk.problemas.join(" "));
   }
   if (mode === "agendar" && (!when || Number.isNaN(when.getTime()) || when.getTime() < Date.now() + 60_000)) throw new PlatformError("Escolha uma data e hora no futuro.");
-  const { data: accs } = accountIds.length ? await ctx.sb.from("channel_accounts").select("id, name").eq("workspace_id", ctx.ws).in("id", accountIds) : { data: [] };
-  const row = { workspace_id: ctx.ws, content, channels: accs?.length ? ["Instagram"] : [], channel_account_ids: (accs ?? []).map((a) => a.id), media_urls: mediaUrls, media_type: mediaType,
-    status: mode === "agendar" ? "agendada" : mode === "agora" ? "agendada" : "rascunho", scheduled_at: mode === "agendar" ? when!.toISOString() : mode === "agora" ? now() : null, error: null, attempts: 0, updated_at: now() };
+  const row = { workspace_id: ctx.ws, content, title, custom, channels: [...new Set((accs ?? []).map((a) => LABEL[a.kind as ChannelId] ?? a.kind))], channel_account_ids: (accs ?? []).map((a) => a.id), media_urls: mediaUrls, media_type: mediaType,
+    status: mode === "rascunho" ? "rascunho" : "agendada", scheduled_at: mode === "agendar" ? when!.toISOString() : mode === "agora" ? now() : null, error: null, attempts: 0, result: {}, updated_at: now() };
   const id = p.id ? String(p.id) : null;
   const q = id ? ctx.sb.from("posts").update(row).eq("workspace_id", ctx.ws).eq("id", id) : ctx.sb.from("posts").insert({ ...row, created_by: ctx.userId });
   const { data, error } = await q.select("id").single();

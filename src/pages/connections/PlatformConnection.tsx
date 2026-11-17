@@ -13,7 +13,7 @@ import { useToast } from "@/components/ui/Toast";
 import { InlineNotice } from "@/components/feedback/States";
 import { PlatformDot } from "@/components/data/Platform";
 import { ConnectModal } from "./ConnectModal";
-import { PLATFORM_GUIDE, type PlatformKey } from "./platformGuides";
+import { PLATFORM_GUIDE } from "./platformGuides";
 
 interface Conn { id: string; auth_mode?: string; app_id?: string | null; external_user_name: string | null; status: "ativa" | "expirada" | "erro"; last_error: string | null; last_synced_at: string | null; token_expires_at: string | null; scopes: string[] }
 interface Acc { id: string; name: string; external_id: string; currency: string; status: string; sync_enabled: boolean; last_synced_at: string | null }
@@ -28,7 +28,7 @@ async function call<T>(body: Record<string, unknown>): Promise<T> {
 }
 
 /** Cartão de uma plataforma de anúncios: conectar, escolher contas, sincronizar e desconectar. */
-export function PlatformConnection({ platform }: { platform: Exclude<PlatformKey, "whatsapp" | "instagram"> }) {
+export function PlatformConnection({ platform }: { platform: "meta" | "google" | "tiktok" | "linkedin" }) {
   const guide = PLATFORM_GUIDE[platform];
   const { current } = useWorkspace();
   const data = useData();

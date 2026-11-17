@@ -1,3 +1,4 @@
+import type { ChannelKind } from "@/config/networks";
 import { supabase } from "./supabase";
 
 async function post<T>(path: string, body: Record<string, unknown>): Promise<T> {
@@ -20,7 +21,7 @@ export const connectCall = <T>(body: Record<string, unknown>) => post<T>("/api/c
 /** WhatsApp e Instagram (enviar, responder, publicar): /api/canais. */
 export const channelCall = <T>(body: Record<string, unknown>) => post<T>("/api/canais", body);
 
-export interface ChannelAccount { id: string; kind: "whatsapp" | "instagram"; name: string; display_name: string | null; picture_url: string | null; status: string; quality: string | null; detail: Record<string, unknown>; enabled: boolean; connection_id: string | null }
+export interface ChannelAccount { id: string; kind: ChannelKind; name: string; display_name: string | null; picture_url: string | null; status: string; quality: string | null; detail: Record<string, unknown>; enabled: boolean; connection_id: string | null }
 export const CHANNEL_ACCOUNT_COLS = "id, kind, name, display_name, picture_url, status, quality, detail, enabled, connection_id";
 
 /** Endereço público dos webhooks (o mesmo domínio em que o app está aberto). */

@@ -85,6 +85,8 @@ export const ROUTES: Route[] = [
   { method: "GET", path: "/conexoes", tool: "listar_contas_conectadas", summary: "Listar contas conectadas e a saúde de cada uma" },
   { method: "GET", path: "/instagram/analises", tool: "analisar_publicacoes", summary: "Analisar o desempenho das publicações do Instagram" },
   { method: "GET", path: "/publicacoes", tool: "listar_publicacoes", summary: "Listar publicações do NinePro" },
+  { method: "POST", path: "/publicacoes", tool: "publicar", summary: "Publicar, agendar ou salvar rascunho em várias redes" },
+  { method: "POST", path: "/publicacoes/validar", tool: "validar_publicacao", summary: "Validar publicação contra os limites de cada rede" },
   { method: "GET", path: "/automacoes", tool: "listar_automacoes", summary: "Listar automações de mensagens" },
   { method: "POST", path: "/automacoes/comentario", tool: "criar_automacao_comentario", summary: "Criar automação comentário → DM (com botão de link)" },
   { method: "PATCH", path: "/automacoes/{automacao_id}", tool: "alterar_automacao", summary: "Ligar, pausar ou excluir automação" },
@@ -223,7 +225,7 @@ async function mcpOne(msg: RpcReq, auth: KeyAuth) {
         protocolVersion: MCP_VERSIONS.includes(asked) ? asked : MCP_VERSIONS[0],
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: "ninepro", title: "NinePro", version: "1.0.0" },
-        instructions: "Ferramentas do NinePro para gestão de tráfego pago e atendimento: leia desempenho, campanhas, leads e conversões; aja em leads, campanhas, públicos e regras; leia e responda conversas do WhatsApp e do Instagram, envie modelos do WhatsApp, responda comentários e publique no Instagram. Valores em reais (BRL). Também lê a análise das publicações (alcance, visualizações, curtidas, salvamentos) e cria automações de comentário → DM com botão de link. Antes de publicar ou criar automações, mostre à pessoa um resumo (contas, legenda, palavra-chave, DM exata) e peça aprovação. Tudo é restrito ao espaço de trabalho conectado." + (auth.ctx.canWrite ? ` Permissões: ${(auth.ctx.scopes ?? []).join(", ")}.` : " Acesso somente leitura."),
+        instructions: "Ferramentas do NinePro para gestão de tráfego pago e atendimento: leia desempenho, campanhas, leads e conversões; aja em leads, campanhas, públicos e regras; leia e responda conversas do WhatsApp e do Instagram, envie modelos do WhatsApp, responda comentários e publique em várias redes de uma vez (Instagram, Facebook, Threads, LinkedIn, YouTube, TikTok, X, Telegram, Discord e Bluesky). Valores em reais (BRL). Também lê a análise das publicações (alcance, visualizações, curtidas, salvamentos) e cria automações de comentário → DM com botão de link. Antes de publicar ou criar automações, mostre à pessoa um resumo (contas, legenda, palavra-chave, DM exata) e peça aprovação. Tudo é restrito ao espaço de trabalho conectado." + (auth.ctx.canWrite ? ` Permissões: ${(auth.ctx.scopes ?? []).join(", ")}.` : " Acesso somente leitura."),
       });
     }
     case "ping": return rpcOk(msg.id, {});

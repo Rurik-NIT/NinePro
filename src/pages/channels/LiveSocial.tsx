@@ -15,6 +15,7 @@ import { SegmentedControl } from "@/components/ui/Tabs";
 import { useToast } from "@/components/ui/Toast";
 import { EmptyState, InlineNotice, LoadingState } from "@/components/feedback/States";
 import { ListScreen } from "@/components/templates/ListScreen";
+import { checkDraft, graphemeCount, isVideo, NETWORK, PUBLISH_KINDS } from "@/config/networks";
 import { bodyOf, CATEGORY_LABEL, SendTemplateModal, TEMPLATE_COLS, TEMPLATE_STATUS, useChannelAccounts, varsOf, type WaTemplate } from "./shared";
 
 const connectLink = (label = "Conectar") => <Link to="/conexoes" className={buttonClasses("primary")}><Cable className="size-4" />{label}</Link>;
@@ -139,57 +140,62 @@ function CreateTemplateModal({ open, onOpenChange, ws, numbers, onCreated }: { o
 }
 
 /* ------------------------------------------------------------------ Publicações (Instagram) */
-interface Post { id: string; content: string; status: "agendada" | "publicada" | "rascunho" | "falhou" | "aguardando_aprovacao"; scheduled_at: string | null; published_at: string | null; created_at: string; channel_account_ids: string[]; media_urls: string[]; media_type: string; result: Record<string, { id?: string; permalink?: string | null; erro?: string; conta: string }>; error: string | null }
-const POST_STATUS: Record<Post["status"], { label: string; tone: "positive" | "info" | "neutral" | "negative" | "warning" }> = { publicada: { label: "Publicada", tone: "positive" }, agendada: { label: "Agendada", tone: "info" }, rascunho: { label: "Rascunho", tone: "neutral" }, falhou: { label: "Falhou", tone: "negative" }, aguardando_aprovacao: { label: "Aguardando aprovação", tone: "warning" } };
-const TYPE_LABEL: Record<string, string> = { IMAGE: "Imagem", CAROUSEL: "Carrossel", REELS: "Reels", VIDEO: "Reels", STORIES: "Story" };
+interface Post { id: string; content: string; title: string | null; custom: Record<string, string> | null; status: "agendada" | "publicada" | "parcial" | "rascunho" | "falhou" | "aguardando_aprovacao"; scheduled_at: string | null; published_at: string | null; created_at: string; channel_account_ids: string[]; media_urls: string[]; media_type: string; result: Record<string, { id?: string; permalink?: string | null; erro?: string; aviso?: string; conta: string; rede?: string }>; error: string | null }
+const POST_STATUS: Record<Post["status"], { label: string; tone: "positive" | "info" | "neutral" | "negative" | "warning" }> = { publicada: { label: "Publicada", tone: "positive" }, parcial: { label: "Parcial", tone: "warning" }, agendada: { label: "Agendada", tone: "info" }, rascunho: { label: "Rascunho", tone: "neutral" }, falhou: { label: "Falhou", tone: "negative" }, aguardando_aprovacao: { label: "Aguardando aprovação", tone: "warning" } };
+const TYPE_LABEL: Record<string, string> = { IMAGE: "Imagem", CAROUSEL: "Carrossel", REELS: "Vídeo", VIDEO: "Vídeo", STORIES: "Story" };
 
 export function LivePosts() {
   const toast = useToast();
-  const { accounts, ws } = useChannelAccounts("instagram");
+  const { accounts, ws } = useChannelAccounts(PUBLISH_KINDS);
   const [rows, setRows] = useState<Post[] | null>(null);
   const [editing, setEditing] = useState<Post | "novo" | null>(null);
   const [deleting, setDeleting] = useState<Post | null>(null);
   const load = useCallback(async () => {
     if (!supabase || !ws) return;
-    const { data } = await supabase.from("posts").select("id, content, status, scheduled_at, published_at, created_at, channel_account_ids, media_urls, media_type, result, error").eq("workspace_id", ws).order("created_at", { ascending: false }).limit(300);
+    const { data } = await supabase.from("posts").select("*").eq("workspace_id", ws).order("created_at", { ascending: false }).limit(300);
     setRows((data as Post[] | null) ?? []);
   }, [ws]);
   useEffect(() => { void load(); }, [load]);
   const publishNow = async (p: Post) => {
     try {
-      const r = await channelCall<{ ok: boolean; error: string | null }>({ action: "post_publish", workspaceId: ws, postId: p.id });
-      toast(r.ok ? { tone: "success", title: "Publicado no Instagram" } : { tone: "error", title: "A publicação falhou", description: r.error ?? undefined });
+      const r = await channelCall<{ ok: boolean; status: string; error: string | null }>({ action: "post_publish", workspaceId: ws, postId: p.id });
+      toast(r.status === "publicada" ? { tone: "success", title: "Publicado" } : r.ok ? { tone: "warning", title: "Publicado em parte das redes", description: r.error ?? undefined } : { tone: "error", title: "A publicação falhou", description: r.error ?? undefined });
     } catch (e) { toast({ tone: "error", title: "A publicação falhou", description: e instanceof Error ? e.message : String(e) }); }
     await load();
   };
   if (accounts === null || rows === null) return <Page><PageHeader title="Publicações" /><LoadingState /></Page>;
-  const accName = (id: string) => accounts.find((a) => a.id === id)?.name ?? "conta removida";
+  const acc = (id: string) => accounts.find((a) => a.id === id);
   return (
     <>
-      <ListScreen<Post> demo={false} title="Publicações" description="Publique agora ou agende no Instagram (feed, carrossel, reels e stories)."
-        rows={rows} getId={(p) => p.id} searchText={(p) => p.content} refreshable onRefresh={load}
+      <ListScreen<Post> demo={false} title="Publicações" description="Publique agora ou agende em várias redes de uma vez: Instagram, Facebook, Threads, LinkedIn, YouTube, TikTok, X, Telegram, Discord e Bluesky."
+        rows={rows} getId={(p) => p.id} searchText={(p) => `${p.content} ${p.title ?? ""}`} refreshable onRefresh={load}
         filters={[{ id: "s", label: "Status", options: Object.entries(POST_STATUS).map(([value, v]) => ({ value, label: v.label })), match: (p, v) => p.status === v }]}
-        actions={accounts.length ? <Button variant="primary" icon={<Plus />} onClick={() => setEditing("novo")}>Nova publicação</Button> : connectLink("Conectar Instagram")}
+        actions={accounts.length ? <Button variant="primary" icon={<Plus />} onClick={() => setEditing("novo")}>Nova publicação</Button> : connectLink("Conectar redes")}
         defaultSort={{ id: "at", dir: "desc" }}
         columns={[
           { id: "t", header: "Publicação", sticky: true, cell: (p) => (
             <div className="flex max-w-[460px] items-center gap-3">
-              {p.media_urls[0] && (/\.(mp4|mov|m4v)(\?|$)/i.test(p.media_urls[0]) ? <span className="grid size-11 shrink-0 place-items-center rounded bg-surface-2 t-caption">vídeo</span> : <img src={p.media_urls[0]} alt="" className="size-11 shrink-0 rounded object-cover" />)}
-              <div className="flex min-w-0 flex-col gap-0.5"><span className="line-clamp-2 whitespace-normal font-semibold">{p.content || "(sem legenda)"}</span>{p.error && <span className="whitespace-normal text-[12px] text-negative">{p.error}</span>}</div>
+              {p.media_urls[0] && (isVideo(p.media_urls[0]) ? <span className="grid size-11 shrink-0 place-items-center rounded bg-surface-2 t-caption">vídeo</span> : <img src={p.media_urls[0]} alt="" className="size-11 shrink-0 rounded object-cover" />)}
+              <div className="flex min-w-0 flex-col gap-0.5"><span className="line-clamp-2 whitespace-normal font-semibold">{p.title || p.content || "(sem texto)"}</span>{p.error && <span className="whitespace-normal text-[12px] text-negative">{p.error}</span>}</div>
             </div>) },
-          { id: "tp", header: "Formato", cell: (p) => <Tag>{TYPE_LABEL[p.media_type] ?? p.media_type}{p.media_urls.length > 1 ? ` · ${p.media_urls.length}` : ""}</Tag> },
-          { id: "c", header: "Contas", cell: (p) => <span className="flex flex-wrap gap-1">{p.channel_account_ids.map((id) => { const r = p.result?.[id]; return r?.permalink ? <a key={id} href={r.permalink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent-text hover:underline">{accName(id)}<ExternalLink className="size-3" /></a> : <Tag key={id}>{accName(id)}</Tag>; })}</span> },
+          { id: "tp", header: "Formato", cell: (p) => <Tag>{p.media_urls.length ? `${TYPE_LABEL[p.media_type] ?? p.media_type}${p.media_urls.length > 1 ? ` · ${p.media_urls.length}` : ""}` : "Texto"}</Tag> },
+          { id: "c", header: "Redes", cell: (p) => <span className="flex flex-wrap gap-1">{p.channel_account_ids.map((id) => {
+            const a = acc(id); const r = p.result?.[id];
+            const label = <span className="inline-flex items-center gap-1 [&_svg]:size-3">{a ? NETWORK[a.kind].icon : null}{a?.name ?? r?.conta ?? "conta removida"}</span>;
+            return r?.permalink ? <a key={id} href={r.permalink} target="_blank" rel="noreferrer" title={r.aviso} className="inline-flex items-center gap-1 text-accent-text hover:underline">{label}<ExternalLink className="size-3" /></a>
+              : <Tag key={id} tone={r?.erro ? "negative" : undefined}>{label}</Tag>;
+          })}</span> },
           { id: "s", header: "Status", cell: (p) => <StatusBadge tone={POST_STATUS[p.status]?.tone ?? "neutral"}>{POST_STATUS[p.status]?.label ?? p.status}</StatusBadge> },
           { id: "at", header: "Quando", align: "right", sortValue: (p) => Date.parse(p.published_at ?? p.scheduled_at ?? p.created_at), cell: (p) => <span className="text-text-soft">{p.published_at ? formatDateTime(new Date(p.published_at)) : p.scheduled_at ? formatDateTime(new Date(p.scheduled_at)) : "—"}</span> },
-          { id: "a", header: "", align: "right", cell: (p) => p.status === "publicada" ? null : (
+          { id: "a", header: "", align: "right", cell: (p) => p.status === "publicada" ? null : p.status === "parcial" ? <Button size="sm" icon={<Send />} onClick={() => void publishNow(p)}>Tentar as que falharam</Button> : (
             <span className="flex justify-end gap-1">
               <Button size="sm" onClick={() => setEditing(p)}>Editar</Button>
               {p.status !== "agendada" && <Button size="sm" icon={<Send />} onClick={() => void publishNow(p)}>Publicar</Button>}
               <IconButton size="sm" label="Excluir publicação" onClick={() => setDeleting(p)}><Trash2 /></IconButton>
             </span>) },
         ]}
-        empty={accounts.length ? { icon: <ImagePlus />, title: "Nenhuma publicação ainda", description: "Crie a primeira: escolha a conta, envie a imagem ou o vídeo e publique agora ou agende.", action: <Button variant="primary" icon={<Plus />} onClick={() => setEditing("novo")}>Nova publicação</Button> }
-          : { icon: <Instagram />, title: "Nenhuma conta do Instagram conectada", description: "Conecte uma conta profissional do Instagram para publicar e agendar daqui.", action: connectLink("Conectar Instagram") }} />
+        empty={accounts.length ? { icon: <ImagePlus />, title: "Nenhuma publicação ainda", description: "Crie a primeira: escolha as redes, envie a imagem ou o vídeo e publique agora ou agende.", action: <Button variant="primary" icon={<Plus />} onClick={() => setEditing("novo")}>Nova publicação</Button> }
+          : { icon: <Instagram />, title: "Nenhuma rede conectada", description: "Conecte o Instagram e as outras redes em Conexões para publicar e agendar daqui.", action: connectLink("Conectar redes") }} />
       {ws && <Composer post={editing} onOpenChange={(o) => !o && setEditing(null)} ws={ws} accounts={accounts} onSaved={load} />}
       <ConfirmDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)} title="Excluir publicação?" confirmLabel="Excluir" description="Ela sai da lista e, se estava agendada, não será publicada."
         onConfirm={async () => { try { await channelCall({ action: "post_delete", workspaceId: ws, postId: deleting?.id }); await load(); } catch (e) { toast({ tone: "error", title: "Não foi possível excluir", description: e instanceof Error ? e.message : String(e) }); } }} />
@@ -216,6 +222,9 @@ function Composer({ post, onOpenChange, ws, accounts, onSaved }: { post: Post | 
   const fileRef = useRef<HTMLInputElement>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [content, setContent] = useState("");
+  const [title, setTitle] = useState("");
+  const [custom, setCustom] = useState<Record<string, string>>({});
+  const [perNetwork, setPerNetwork] = useState(false);
   const [media, setMedia] = useState<string[]>([]);
   const [type, setType] = useState("FEED");
   const [mode, setMode] = useState<"agora" | "agendar" | "rascunho">("agora");
@@ -228,25 +237,27 @@ function Composer({ post, onOpenChange, ws, accounts, onSaved }: { post: Post | 
     if (!post) return;
     const p = post === "novo" ? null : post;
     setSelected(p?.channel_account_ids ?? (accounts.length === 1 ? [accounts[0].id] : []));
-    setContent(p?.content ?? ""); setMedia(p?.media_urls ?? []);
+    setContent(p?.content ?? ""); setTitle(p?.title ?? ""); setCustom(p?.custom ?? {}); setPerNetwork(!!p?.custom && Object.keys(p.custom).length > 0); setMedia(p?.media_urls ?? []);
     setType(p?.media_type === "STORIES" ? "STORIES" : p?.media_type === "REELS" || p?.media_type === "VIDEO" ? "REELS" : "FEED");
     setMode(p?.status === "agendada" ? "agendar" : p ? "rascunho" : "agora");
     setWhen(p?.scheduled_at ? localInput(new Date(p.scheduled_at)) : localInput(new Date(Date.now() + 3600_000)));
     setUrl(""); setError(null);
   }, [post, accounts]);
 
+  const kinds = [...new Set(accounts.filter((a) => selected.includes(a.id)).map((a) => a.kind))];
+  const hasIg = kinds.includes("instagram");
   const upload = async (files: FileList | null) => {
     if (!files?.length || !supabase) return;
     setUploading(true); setError(null);
     try {
-      for (const f of Array.from(files).slice(0, 10 - media.length)) {
+      for (const f of Array.from(files).slice(0, 35 - media.length)) {
         const video = f.type.startsWith("video/");
         if (!video && !f.type.startsWith("image/")) throw new Error(`${f.name}: envie imagem ou vídeo.`);
-        if (video && f.size > 300 * 1024 * 1024) throw new Error(`${f.name}: vídeo acima de 300 MB.`);
+        if (video && f.size > 500 * 1024 * 1024) throw new Error(`${f.name}: vídeo acima de 500 MB.`);
         const blob = video ? f : await toJpeg(f);
         const path = `${ws}/${crypto.randomUUID()}.${video ? (f.name.split(".").pop() || "mp4").toLowerCase() : "jpg"}`;
         const { error: e } = await supabase.storage.from("midia").upload(path, blob, { contentType: video ? f.type : "image/jpeg" });
-        if (e) throw new Error(e.message);
+        if (e) throw new Error(/size|large|exceed/i.test(e.message) ? `${f.name}: arquivo maior que o limite do armazenamento.` : e.message);
         const pub = supabase.storage.from("midia").getPublicUrl(path).data.publicUrl;
         setMedia((m) => [...m, pub]);
       }
@@ -254,58 +265,77 @@ function Composer({ post, onOpenChange, ws, accounts, onSaved }: { post: Post | 
     setUploading(false);
     if (fileRef.current) fileRef.current.value = "";
   };
-  const hasVideo = media.some((m) => /\.(mp4|mov|m4v)(\?|$)/i.test(m));
+  const hasVideo = media.some(isVideo);
   const mediaType = type === "STORIES" ? "STORIES" : media.length > 1 ? "CAROUSEL" : type === "REELS" || hasVideo ? "REELS" : "IMAGE";
-  const valid = mode === "rascunho" ? content.trim().length > 0 || media.length > 0 : selected.length > 0 && media.length > 0 && (mode !== "agendar" || !!when);
+  const customUsed = perNetwork ? custom : {};
+  const problems = mode === "rascunho" ? [] : checkDraft(kinds, { text: content, title, custom: customUsed, media });
+  const valid = mode === "rascunho" ? content.trim().length > 0 || media.length > 0 : selected.length > 0 && !problems.length && (mode !== "agendar" || !!when);
 
   const submit = async () => {
     setBusy(true); setError(null);
     try {
-      const r = await channelCall<{ ok: boolean; status: string; error?: string | null }>({ action: "post_save", workspaceId: ws, id: post && post !== "novo" ? post.id : undefined, content, accountIds: selected, mediaUrls: media, mediaType, mode, scheduledAt: mode === "agendar" ? new Date(when).toISOString() : undefined });
+      const r = await channelCall<{ ok: boolean; status: string; error?: string | null }>({ action: "post_save", workspaceId: ws, id: post && post !== "novo" ? post.id : undefined, content, title: title.trim() || undefined, custom: customUsed, accountIds: selected, mediaUrls: media, mediaType, mode, scheduledAt: mode === "agendar" ? new Date(when).toISOString() : undefined });
       if (mode === "agora" && !r.ok) { setError(r.error ?? "A publicação falhou."); setBusy(false); onSaved(); return; }
-      toast({ tone: "success", title: mode === "agora" ? "Publicado no Instagram" : mode === "agendar" ? "Publicação agendada" : "Rascunho salvo" });
+      if (mode === "agora" && r.status === "parcial") toast({ tone: "warning", title: "Publicado em parte das redes", description: r.error ?? undefined });
+      else toast({ tone: "success", title: mode === "agora" ? `Publicado em ${kinds.length} rede(s)` : mode === "agendar" ? "Publicação agendada" : "Rascunho salvo" });
       onOpenChange(false); onSaved();
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     setBusy(false);
   };
 
+  const grouped = PUBLISH_KINDS.map((k) => ({ k, list: accounts.filter((a) => a.kind === k) })).filter((g) => g.list.length);
+  const maxText = Math.min(...kinds.map((k) => NETWORK[k].limits?.text ?? 63206), 63206);
   return (
-    <Modal open={!!post} onOpenChange={onOpenChange} size="lg" icon={<Instagram />} title={post && post !== "novo" ? "Editar publicação" : "Nova publicação"}
-      footer={<><Button variant="ghost" onClick={() => onOpenChange(false)}>Cancelar</Button><Button variant="primary" loading={busy} disabled={!valid || uploading} icon={mode === "agendar" ? <CalendarClock /> : mode === "agora" ? <Send /> : undefined} onClick={() => void submit()}>{mode === "agora" ? "Publicar agora" : mode === "agendar" ? "Agendar" : "Salvar rascunho"}</Button></>}>
+    <Modal open={!!post} onOpenChange={onOpenChange} size="lg" icon={<Send />} title={post && post !== "novo" ? "Editar publicação" : "Nova publicação"}
+      footer={<><Button variant="ghost" onClick={() => onOpenChange(false)}>Cancelar</Button><Button variant="primary" loading={busy} disabled={!valid || uploading} icon={mode === "agendar" ? <CalendarClock /> : mode === "agora" ? <Send /> : undefined} onClick={() => void submit()}>{mode === "agora" ? `Publicar agora${kinds.length > 1 ? ` em ${kinds.length} redes` : ""}` : mode === "agendar" ? "Agendar" : "Salvar rascunho"}</Button></>}>
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
-          <span className="text-secondary font-semibold text-text-soft">Contas</span>
-          <div className="flex flex-wrap gap-3">{accounts.map((a) => <Checkbox key={a.id} checked={selected.includes(a.id)} onCheckedChange={(v) => setSelected((s) => (v ? [...s, a.id] : s.filter((x) => x !== a.id)))} label={a.name} />)}</div>
+          <span className="text-secondary font-semibold text-text-soft">Onde publicar</span>
+          <div className="flex flex-col gap-2">
+            {grouped.map(({ k, list }) => (
+              <div key={k} className="flex flex-wrap items-center gap-3">
+                <span className="inline-flex w-[120px] items-center gap-1.5 t-caption [&_svg]:size-3.5">{NETWORK[k].icon}{NETWORK[k].label}</span>
+                {list.map((a) => <Checkbox key={a.id} checked={selected.includes(a.id)} disabled={a.status !== "ativo"} onCheckedChange={(v) => setSelected((s) => (v ? [...s, a.id] : s.filter((x) => x !== a.id)))} label={a.name} />)}
+              </div>
+            ))}
+          </div>
+          {accounts.length > 0 && grouped.length < PUBLISH_KINDS.length && <Link to="/conexoes" className="t-caption text-accent-text hover:underline">Conectar mais redes →</Link>}
         </div>
-        <SegmentedControl ariaLabel="Formato" value={type} onValueChange={setType} options={[{ value: "FEED", label: "Feed / carrossel" }, { value: "REELS", label: "Reels" }, { value: "STORIES", label: "Story" }]} />
+        {hasIg && <SegmentedControl ariaLabel="Formato no Instagram" value={type} onValueChange={setType} options={[{ value: "FEED", label: "Instagram: feed / carrossel" }, { value: "REELS", label: "Reels" }, { value: "STORIES", label: "Story" }]} />}
         <div className="flex flex-col gap-2">
-          <span className="text-secondary font-semibold text-text-soft">Mídia {type === "FEED" ? "(até 10 para carrossel)" : "(1 arquivo)"}</span>
+          <span className="text-secondary font-semibold text-text-soft">Mídia</span>
           <div className="flex flex-wrap gap-2">
             {media.map((m, i) => (
               <div key={m} className="relative size-20 overflow-hidden rounded-md border border-line bg-surface-2">
-                {/\.(mp4|mov|m4v)(\?|$)/i.test(m) ? <video src={m} className="size-full object-cover" muted /> : <img src={m} alt="" className="size-full object-cover" />}
+                {isVideo(m) ? <video src={m} className="size-full object-cover" muted /> : <img src={m} alt="" className="size-full object-cover" />}
                 <button type="button" aria-label="Remover mídia" className="absolute right-1 top-1 grid size-5 place-items-center rounded-full bg-black/60 text-white" onClick={() => setMedia((v) => v.filter((_, j) => j !== i))}><X className="size-3" /></button>
               </div>
             ))}
-            {media.length < (type === "FEED" ? 10 : 1) && (
+            {media.length < 35 && (
               <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} className="grid size-20 place-items-center rounded-md border border-dashed border-line-strong text-text-muted hover:bg-surface-2">
                 {uploading ? <span className="t-caption">Enviando…</span> : <Upload className="size-5" />}
               </button>
             )}
           </div>
-          <input ref={fileRef} type="file" accept="image/*,video/mp4,video/quicktime" multiple={type === "FEED"} hidden onChange={(e) => void upload(e.target.files)} />
+          <input ref={fileRef} type="file" accept="image/*,video/mp4,video/quicktime,video/webm" multiple hidden onChange={(e) => void upload(e.target.files)} />
           <div className="flex gap-2">
-            <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Ou cole o link público de uma imagem (JPEG) ou vídeo (MP4)" />
+            <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Ou cole o link público de uma imagem ou vídeo (MP4)" />
             <Button icon={<Link2 />} disabled={!/^https:\/\//.test(url)} onClick={() => { setMedia((m) => [...m, url.trim()]); setUrl(""); }}>Adicionar</Button>
           </div>
-          <span className="t-caption">Imagens são convertidas para JPEG. Proporção aceita no feed: de 4:5 (vertical) a 1,91:1 (horizontal). Reels e stories: 9:16.</span>
+          <span className="t-caption">Imagens são convertidas para JPEG. Instagram: de 4:5 a 1,91:1 no feed; reels e stories 9:16. YouTube e TikTok exigem vídeo; Bluesky aceita imagens de até 1 MB.</span>
         </div>
-        {type !== "STORIES" && <Field label="Legenda" hint={`${content.length}/2200 · até 30 hashtags`}>{(p) => <Textarea id={p.id} value={content} onChange={(e) => setContent(e.target.value)} rows={5} maxLength={2200} />}</Field>}
+        {kinds.includes("youtube") && <Field label="Título (YouTube)" hint={`${graphemeCount(title)}/100`}>{(p) => <Input {...p} value={title} maxLength={100} onChange={(e) => setTitle(e.target.value)} placeholder="Ex.: 3 dicas para escolher o tênis certo" />}</Field>}
+        {type !== "STORIES" && <Field label="Texto" hint={`${graphemeCount(content)}${kinds.length ? `/${maxText}` : ""}${kinds.length > 1 ? " (limite da rede mais curta)" : ""}`}>{(p) => <Textarea id={p.id} value={content} onChange={(e) => setContent(e.target.value)} rows={5} />}</Field>}
+        {kinds.length > 1 && <Checkbox checked={perNetwork} onCheckedChange={setPerNetwork} label="Texto diferente por rede" description="Ex.: versão curta para X e Bluesky e mais longa para LinkedIn." />}
+        {perNetwork && kinds.map((k) => (
+          <Field key={k} label={`Texto no ${NETWORK[k].label}`} hint={`${graphemeCount(custom[k] || content)}/${NETWORK[k].limits?.text ?? "∞"} · vazio = usa o texto principal`}>{(p) => <Textarea id={p.id} value={custom[k] ?? ""} onChange={(e) => setCustom((c) => ({ ...c, [k]: e.target.value }))} rows={3} placeholder={content} />}</Field>
+        ))}
         <div className="flex flex-col gap-2">
           <SegmentedControl ariaLabel="Quando" value={mode} onValueChange={setMode} options={[{ value: "agora", label: "Publicar agora" }, { value: "agendar", label: "Agendar" }, { value: "rascunho", label: "Rascunho" }]} />
           {mode === "agendar" && <Input type="datetime-local" value={when} min={localInput(new Date(Date.now() + 120_000))} onChange={(e) => setWhen(e.target.value)} className="max-w-[260px]" />}
           {mode === "agendar" && <span className="t-caption">O NinePro publica no horário escolhido (verificação a cada 5 minutos).</span>}
         </div>
+        {problems.length > 0 && selected.length > 0 && <InlineNotice tone="warning"><ul className="list-disc pl-4">{problems.map((x) => <li key={x}>{x}</li>)}</ul></InlineNotice>}
         {error && <InlineNotice tone="negative">{error}</InlineNotice>}
       </div>
     </Modal>

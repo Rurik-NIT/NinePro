@@ -11,6 +11,7 @@ import { PlatformDot } from "@/components/data/Platform";
 import { useAuth } from "@/lib/auth";
 import { PlatformConnection } from "./connections/PlatformConnection";
 import { ChannelConnection } from "./connections/ChannelConnection";
+import { SOCIAL_KINDS } from "@/config/networks";
 
 const SCOPES: Record<PlatformId, string[]> = {
   meta: ["Campanhas", "Conjuntos", "Anúncios", "Leads", "Públicos"],
@@ -64,6 +65,14 @@ function ConnectionsList({ onRedo }: { onRedo?: () => void }) {
           <ul className="grid grid-cols-1 gap-gutter md:grid-cols-2">
             <ChannelConnection kind="whatsapp" />
             <ChannelConnection kind="instagram" />
+          </ul>
+        </Section>
+      )}
+
+      {live && (
+        <Section title="Redes para publicar" description="Conecte as redes e publique em todas de uma vez, pelo app ou pelo seu agente de IA.">
+          <ul className="grid grid-cols-1 gap-gutter md:grid-cols-2">
+            {SOCIAL_KINDS.map((k) => <ChannelConnection key={k} kind={k} />)}
           </ul>
         </Section>
       )}

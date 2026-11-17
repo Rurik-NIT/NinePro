@@ -37,6 +37,7 @@ async function result(env: Env, token: string, expiresIn: number | undefined, ex
 export const instagramProvider: ChannelProvider = {
   id: "instagram",
   label: "Instagram",
+  limits: { text: 2200, images: 10, videos: 10, textOnly: false, mixed: true, needsMedia: "any" },
   nineproApp: (env) => (env.INSTAGRAM_APP_ID && env.INSTAGRAM_APP_SECRET ? { appId: env.INSTAGRAM_APP_ID, appSecret: env.INSTAGRAM_APP_SECRET } : null),
   scopes: (env) => (env.INSTAGRAM_SCOPES || IG_DEFAULT_SCOPES).split(","),
   appFields: [
