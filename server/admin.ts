@@ -85,12 +85,24 @@ export async function handleAdmin(req: Request, env: Env): Promise<Response> {
           if (error) return fail(400, toPortuguese(error.message));
           user = data.user;
         }
-        if (workspaceName) {
+        const targetWs = str(body.workspaceId, 64);
+        let espaco = workspaceName || "Meu espaço";
+        if (targetWs) {
+          // Equipe de um cliente existente: entra no espaço escolhido e o espaço pessoal criado pelo gatilho é removido.
+          if (!isUuid(targetWs)) return fail(400, "Espaço de trabalho inválido.");
+          const { data: wsRow } = await sb.from("workspaces").select("id, name").eq("id", targetWs).maybeSingle();
+          if (!wsRow) return fail(404, "Espaço de trabalho não encontrado.");
+          const role = ["owner", "admin", "member"].includes(String(body.role)) ? String(body.role) : "member";
+          const { error: mErr } = await sb.from("workspace_members").upsert({ workspace_id: targetWs, user_id: user.id, role }, { onConflict: "workspace_id,user_id" });
+          if (mErr) return fail(500, mErr.message);
+          await sb.from("workspaces").delete().eq("created_by", user.id).neq("id", targetWs);
+          espaco = `${wsRow.name as string} (${role})`;
+        } else if (workspaceName) {
           // O gatilho handle_new_user já criou "Meu espaço"; renomeia para o nome do cliente.
           await sb.from("workspaces").update({ name: workspaceName }).eq("created_by", user.id);
         }
         if (body.makeAdmin === true) await sb.from("platform_admins").upsert({ user_id: user.id });
-        await audit("criou_usuario", { id: user.id, email }, { modo: mode, espaco: workspaceName || "Meu espaço", super_admin: body.makeAdmin === true });
+        await audit("criou_usuario", { id: user.id, email }, { modo: mode, espaco, super_admin: body.makeAdmin === true });
         return json(200, { id: user.id, email, password, invited: mode === "invite" });
       }
       default: break;
@@ -145,6 +157,30 @@ export async function handleAdmin(req: Request, env: Env): Promise<Response> {
         await audit(on ? "concedeu_super_admin" : "removeu_super_admin", tgt);
         return json(200, { ok: true });
       }
+      case "add_member": {
+        const wsId = str(body.workspaceId, 64);
+        const role = ["owner", "admin", "member"].includes(String(body.role)) ? String(body.role) : "member";
+        if (!isUuid(wsId)) return fail(400, "Espaço de trabalho inválido.");
+        const { data: wsRow } = await sb.from("workspaces").select("name").eq("id", wsId).maybeSingle();
+        if (!wsRow) return fail(404, "Espaço de trabalho não encontrado.");
+        const { error } = await sb.from("workspace_members").upsert({ workspace_id: wsId, user_id: id, role }, { onConflict: "workspace_id,user_id" });
+        if (error) throw error;
+        await audit("adicionou_ao_espaco", tgt, { espaco: wsRow.name, papel: role });
+        return json(200, { ok: true });
+      }
+      case "remove_member": {
+        const wsId = str(body.workspaceId, 64);
+        if (!isUuid(wsId)) return fail(400, "Espaço de trabalho inválido.");
+        const { data: members } = await sb.from("workspace_members").select("user_id, role").eq("workspace_id", wsId);
+        const me = members?.find((m) => m.user_id === id);
+        if (!me) return fail(404, "A pessoa não faz parte deste espaço.");
+        if (me.role === "owner" && (members ?? []).filter((m) => m.role === "owner").length <= 1) return fail(400, "Este é o único proprietário do espaço. Defina outro proprietário antes de remover.");
+        const { error } = await sb.from("workspace_members").delete().eq("workspace_id", wsId).eq("user_id", id);
+        if (error) throw error;
+        const { data: wsRow } = await sb.from("workspaces").select("name").eq("id", wsId).maybeSingle();
+        await audit("removeu_do_espaco", tgt, { espaco: wsRow?.name ?? wsId });
+        return json(200, { ok: true });
+      }
       case "delete": {
         if (self) return fail(400, "Você não pode excluir a própria conta.");
         // Espaços onde a pessoa é a única integrante saem junto (com campanhas, leads etc.).
@@ -194,7 +230,11 @@ async function listUsers(sb: SupabaseClient) {
     wsOf.set(m.user_id as string, list);
   }
   const now = Date.now();
+  const { data: allWs } = await sb.from("workspaces").select("id, name, created_at").order("name");
+  const memberCount = new Map<string, number>();
+  for (const m of members ?? []) { const w = m.workspaces as unknown as { id: string } | null; if (w) memberCount.set(w.id, (memberCount.get(w.id) ?? 0) + 1); }
   return {
+    workspaces: (allWs ?? []).map((w) => ({ id: w.id as string, name: w.name as string, members: memberCount.get(w.id as string) ?? 0 })),
     users: users.map((u) => ({
       id: u.id,
       email: u.email ?? "",
