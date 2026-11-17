@@ -72,6 +72,13 @@ async function saveMessage(sb: SupabaseClient, ws: string, conversationId: strin
   return data?.[0] ? (data[0].id as number) : null;
 }
 
+/** A Meta reenvia webhooks; mensagem já gravada não deve contar de novo como não lida. */
+async function alreadyHave(sb: SupabaseClient, ws: string, externalId: string) {
+  if (!externalId) return false;
+  const { data } = await sb.from("messages").select("id").eq("workspace_id", ws).eq("external_id", externalId).limit(1);
+  return !!data?.length;
+}
+
 /* ------------------------------------------------------------------ sincronização (ao conectar e no botão) */
 export async function syncChannel(sb: SupabaseClient, env: Env, conn: { id: string; workspace_id: string; platform: ChannelId }, trigger: "manual" | "agendada" | "conexao") {
   const kind = conn.platform;
@@ -246,6 +253,7 @@ async function handleWhatsAppChange(sb: SupabaseClient, env: Env, change: Json, 
   if (!acc) return;
   const contacts = (v.contacts ?? []) as { wa_id: string; profile?: { name?: string } }[];
   for (const m of (v.messages ?? []) as Json[]) {
+    if (await alreadyHave(sb, acc.workspace_id, String(m.id))) continue;
     const from = String(m.from);
     const at = new Date(Number(m.timestamp) * 1000).toISOString();
     const { body, kind, mediaId } = waBody(m);
@@ -288,6 +296,7 @@ async function handleInstagramEntry(sb: SupabaseClient, env: Env, entry: Json, c
     const recipient = String((ev.recipient as Json)?.id ?? "");
     const thread = echo ? recipient : sender;
     if (!thread || thread === acc.external_id) continue;
+    if (await alreadyHave(sb, acc.workspace_id, String(m.mid ?? ""))) continue;
     const at = new Date(Number(ev.timestamp ?? Date.now())).toISOString();
     const att = ((m.attachments ?? []) as { type?: string; payload?: { url?: string } }[])[0];
     const body = String(m.text ?? "") || (att ? { image: "[Foto]", video: "[Vídeo]", audio: "[Áudio]", share: "[Compartilhamento]", story_mention: "[Mencionou você no story]", ig_reel: "[Reel]" }[att.type ?? ""] ?? "[Anexo]" : "");
