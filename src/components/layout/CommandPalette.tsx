@@ -3,7 +3,8 @@ import * as D from "@radix-ui/react-dialog";
 import { Monitor, Moon, Search, Sun } from "lucide-react";
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { ALL_LEAVES, ALL_NAV } from "@/config/navigation";
+import { ALL_LEAVES, ALL_NAV, LIVE_HIDDEN, LIVE_LEAVES } from "@/config/navigation";
+import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
 import { Kbd } from "@/components/ui/Badge";
 
@@ -14,6 +15,7 @@ const group = "[&_[cmdk-group-heading]]:t-label [&_[cmdk-group-heading]]:px-3 [&
 /** Paleta de comandos ⌘K + atalhos "G + tecla" (padrão observado na referência). */
 export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const navigate = useNavigate();
+  const liveMode = useAuth().mode === "supabase";
   const { setPreference } = useTheme();
 
   useEffect(() => {
@@ -29,7 +31,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
       if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key.toLowerCase() === "g") { gPressed = Date.now(); return; }
       if (Date.now() - gPressed < 900) {
-        const dest = ALL_NAV.find((n) => n.shortcut?.toLowerCase() === e.key.toLowerCase());
+        const dest = ALL_NAV.find((n) => n.shortcut?.toLowerCase() === e.key.toLowerCase() && !(liveMode && LIVE_HIDDEN.has(n.id)));
         if (dest) { e.preventDefault(); navigate(dest.path); }
         gPressed = 0;
       }
@@ -56,7 +58,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
             <Command.List className="max-h-[360px] overflow-y-auto p-2">
               <Command.Empty className="py-10 text-center t-secondary">Nada encontrado.</Command.Empty>
               <Command.Group heading="Páginas" className={group}>
-                {ALL_LEAVES.map((n) => (
+                {(liveMode ? LIVE_LEAVES : ALL_LEAVES).map((n) => (
                   <Command.Item key={n.id} value={`${n.label} ${n.module?.label ?? ""} ${n.id}`} onSelect={() => run(() => navigate(n.path))} className={item}>
                     <n.icon />
                     <span className="flex-1">{n.label}</span>

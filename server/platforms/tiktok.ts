@@ -110,4 +110,7 @@ export const tiktokProvider: Provider = {
   async setCampaignStatus(env, auth, acc, id, status) {
     await tt(env, "/campaign/status/update/", { method: "POST", token: token(auth), body: JSON.stringify({ advertiser_id: acc.externalId, campaign_ids: [id], operation_status: status === "active" ? "ENABLE" : "DISABLE" }) });
   },
+  async setCampaignBudget(env, auth, acc, id, daily) {
+    await tt(env, "/campaign/update/", { method: "POST", token: token(auth), body: JSON.stringify({ advertiser_id: acc.externalId, campaign_id: id, budget: Math.round(daily * 100) / 100 }) });
+  },
 };

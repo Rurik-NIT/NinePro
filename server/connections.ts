@@ -318,5 +318,11 @@ export async function handleSync(req: Request, env: Env): Promise<Response> {
   const { data: conns } = await sb.from("platform_connections").select("id, workspace_id, platform").eq("status", "ativa");
   const results = [];
   for (const c of conns ?? []) if (isPlatform(c.platform)) results.push({ espaco: c.workspace_id, plataforma: c.platform, ...(await syncConnection(sb, env, c as ConnRow, "agendada", 3)) });
+  // Canais: atualiza números, modelos e estatísticas do Instagram a cada 12 horas
+  const { data: chans } = await sb.from("platform_connections").select("id, workspace_id, platform, last_synced_at").eq("status", "ativa").in("platform", ["whatsapp", "instagram"]);
+  for (const c of chans ?? []) {
+    if (c.last_synced_at && Date.now() - Date.parse(c.last_synced_at as string) < 12 * 3_600_000) continue;
+    if (isChannel(c.platform)) results.push({ espaco: c.workspace_id, plataforma: c.platform, ...(await syncChannel(sb, env, { id: c.id as string, workspace_id: c.workspace_id as string, platform: c.platform }, "agendada")) });
+  }
   return json(200, { conexoes: results.length, results });
 }

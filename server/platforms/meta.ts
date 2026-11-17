@@ -115,6 +115,9 @@ export const metaProvider: Provider = {
   async setCampaignStatus(env, auth, _acc, id, status) {
     await call(`${graph(env)}/${id}`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ status: status === "active" ? "ACTIVE" : "PAUSED", access_token: token(auth) }) });
   },
+  async setCampaignBudget(env, auth, _acc, id, daily) {
+    await call(`${graph(env)}/${id}`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ daily_budget: String(Math.round(daily * 100)), access_token: token(auth) }) });
+  },
 };
 
 export type { AppCreds };

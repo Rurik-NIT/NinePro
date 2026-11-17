@@ -7,6 +7,7 @@ import { dispatchEvent } from "./webhooks.js";
 import { applyCampaignStatus } from "./connections.js";
 import { replyComment, savePost, sendTemplate, sendToConversation } from "./channels.js";
 import { PlatformError } from "./platforms/types.js";
+import { registerConversion } from "./ingest.js";
 
 export interface ToolCtx { sb: SupabaseClient; ws: string; canWrite: boolean; env: Record<string, string | undefined> }
 type Json = Record<string, unknown>;
@@ -287,6 +288,23 @@ export const TOOLS: Tool[] = [
     description: "Contas de anúncio conectadas ao espaço, com plataforma, moeda e última sincronização.",
     input: { type: "object", properties: {}, additionalProperties: false },
     run: async (ctx) => ({ contas: await q<Json[]>(ctx.sb.from("ad_accounts").select("id, name, platform, currency, timezone, status, last_synced_at").eq("workspace_id", ctx.ws).order("name")) }),
+  },
+  {
+    name: "registrar_conversao", title: "Registrar conversão", write: true,
+    description: "Registra uma conversão vinda do seu sistema (venda, lead, cadastro…). Atribui à campanha pela UTM (nome ou ID) e avisa os webhooks (conversao.recebida). Use id_externo para não duplicar.",
+    input: { type: "object", properties: {
+      tipo: { type: "string", description: "purchase, lead, signup, add_to_cart, initiate_checkout, contact, schedule, subscribe ou um nome livre" },
+      valor: { type: "number", minimum: 0 }, id_externo: { type: "string", description: "ID do pedido/lead no seu sistema" },
+      utm_source: { type: "string" }, utm_medium: { type: "string" }, utm_campaign: { type: "string" }, campanha_id: { type: "string", format: "uuid" },
+      email: { type: "string" }, telefone: { type: "string" }, nome: { type: "string" }, pagina: { type: "string" },
+    }, required: ["tipo"], additionalProperties: false },
+    run: async (ctx, a) => {
+      const tipo = str(a.tipo, 60);
+      if (!tipo) throw new ToolError(400, "Informe o tipo da conversão.");
+      const utm = Object.fromEntries([["source", a.utm_source], ["medium", a.utm_medium], ["campaign", a.utm_campaign]].map(([k, v]) => [k, str(v, 200)]).filter(([, v]) => v));
+      const contact = Object.fromEntries([["email", a.email], ["phone", a.telefone], ["name", a.nome]].map(([k, v]) => [k, str(v, 200)]).filter(([, v]) => v));
+      return registerConversion(ctx.sb, ctx.ws, { type: tipo, value: Number(a.valor) || 0, externalId: str(a.id_externo, 120), source: "API", page: str(a.pagina, 300), utm, contact, campaignId: a.campanha_id ? needUuid(a.campanha_id, "campanha_id") : null });
+    },
   },
   {
     name: "listar_canais", title: "Listar canais de mensagem", write: false,

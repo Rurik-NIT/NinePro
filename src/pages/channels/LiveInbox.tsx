@@ -1,6 +1,6 @@
 import { AtSign, CheckCheck, EyeOff, Eye, Filter, Instagram, MessageCircle, MessageSquare, MessagesSquare, Plus, Reply, Send, Trash2, Clock } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { cn } from "@/lib/cn";
 import { supabase } from "@/lib/supabase";
 import { formatDateTime } from "@/lib/format";
@@ -70,6 +70,8 @@ export function LiveInboxMessages() {
     if (activeRef.current === id) setMsgs((data as Msg[] | null) ?? []);
   }, []);
   useEffect(() => { void loadConvs(); }, [loadConvs]);
+  const [params] = useSearchParams();
+  useEffect(() => { const c = params.get("conversa"); if (c) setActiveId(c); }, [params]);
   useEffect(() => { if (activeId) void loadMsgs(activeId); else setMsgs([]); }, [activeId, loadMsgs]);
   useEffect(() => { bottom.current?.scrollIntoView({ block: "end" }); }, [msgs.length, activeId]);
 

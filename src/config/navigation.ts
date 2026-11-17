@@ -233,3 +233,16 @@ export function findModule(pathname: string): NavItem | undefined {
 
 export const findNav = (pathname: string) => findLeaf(pathname);
 export const groupOf = (id: string) => NAV.find((g) => g.items.some((i) => i.id === id || i.children?.some((c) => c.items.some((l) => l.id === id))));
+
+/* ---------------------------------------------------------------- versão para clientes reais (banco conectado) */
+/** Itens que dependem de serviços externos ainda não contratados: somem do menu com o banco conectado. */
+export const LIVE_HIDDEN = new Set([
+  "posts-queues", "inbox-reviews", "commerce", "creators", "wa-flows", "wa-groups", "wa-conversions", "imessage", "phone",
+  "set-usage", "set-billing", "set-security", "set-retention", "set-notifications", "set-apps", "set-slack", "set-leaderboard", "set-ai", "set-whitelabel", "set-sso", "set-danger",
+  "hashtags", "live", "balance", "account", "ads-keywords", "ads-search-terms", "ads-bids", "ads-catalogs", "ads-partnerships",
+]);
+const pruneItem = (m: NavItem): NavItem => (m.children ? { ...m, children: m.children.map((g) => ({ ...g, items: g.items.filter((l) => !LIVE_HIDDEN.has(l.id)) })).filter((g) => g.items.length) } : m);
+export const LIVE_NAV: NavGroup[] = NAV.map((g) => ({ ...g, items: g.items.filter((m) => !LIVE_HIDDEN.has(m.id)).map(pruneItem) }));
+export const LIVE_SETTINGS_NAV: NavItem = pruneItem(SETTINGS_NAV);
+export const liveModule = (m: NavItem | undefined) => (m ? pruneItem(m) : m);
+export const LIVE_LEAVES = ALL_LEAVES.filter((l) => !LIVE_HIDDEN.has(l.id) && !(l.module && LIVE_HIDDEN.has(l.module.id)) && !l.path.startsWith("/console") && l.id !== SYSTEM_NAV.id);

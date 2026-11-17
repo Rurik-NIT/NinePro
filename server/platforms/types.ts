@@ -52,6 +52,8 @@ export interface Provider extends Connector {
   structure(env: Env, auth: StoredAuth, account: NAccount): Promise<{ campaigns: NCampaign[]; adSets: NAdSet[]; ads: NAd[] }>;
   insights(env: Env, auth: StoredAuth, account: NAccount, since: string, until: string): Promise<NInsight[]>;
   setCampaignStatus(env: Env, auth: StoredAuth, account: NAccount, campaignExternalId: string, status: "active" | "paused"): Promise<void>;
+  /** Altera o orçamento diário da campanha (na moeda da conta). Ausente = plataforma não suportada. */
+  setCampaignBudget?(env: Env, auth: StoredAuth, account: NAccount, campaignExternalId: string, dailyBudget: number): Promise<void>;
 }
 
 /** Número de WhatsApp ou conta do Instagram encontrada na conexão. */

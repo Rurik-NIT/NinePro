@@ -7,7 +7,7 @@ import { useLocalState } from "@/lib/useLocalState";
 import { useAuth } from "@/lib/auth";
 import { useWorkspace } from "@/lib/workspace";
 import { supabase } from "@/lib/supabase";
-import { SETTINGS_NAV } from "@/config/navigation";
+import { LIVE_HIDDEN, SETTINGS_NAV } from "@/config/navigation";
 import { Page, PageHeader } from "@/components/layout/AppShell";
 import { Avatar } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -50,8 +50,12 @@ function ThemeCard({ value, label, icon, active, onClick }: { value: ThemePrefer
 
 export default function Settings() {
   const [params] = useSearchParams();
-  const sectionKey = params.get("secao") ?? "perfil";
-  const section = SETTINGS_NAV.children![0].items.find((l) => l.path.endsWith(`secao=${sectionKey}`));
+  const rawKey = params.get("secao") ?? "perfil";
+  const rawSection = SETTINGS_NAV.children![0].items.find((l) => l.path.endsWith(`secao=${rawKey}`));
+  // Com banco conectado, seções que ainda não funcionam de verdade caem no Perfil
+  const hiddenLive = useAuth().mode === "supabase" && !!rawSection && LIVE_HIDDEN.has(rawSection.id);
+  const sectionKey = hiddenLive ? "perfil" : rawKey;
+  const section = hiddenLive ? SETTINGS_NAV.children![0].items[0] : rawSection;
   const { preference, setPreference } = useTheme();
   const toast = useToast();
   const auth = useAuth();

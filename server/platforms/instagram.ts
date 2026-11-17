@@ -178,3 +178,12 @@ export async function igPublish(env: Env, token: string, igId: string, p: { type
   const info = await igMediaInfo(env, token, pub.id).catch(() => ({ permalink: undefined }));
   return { id: pub.id, permalink: (info as IgMedia).permalink ?? null };
 }
+
+/** Métricas de uma publicação (alcance, visualizações, salvos, compartilhamentos). Falha silenciosa: devolve vazio. */
+export async function igMediaInsights(env: Env, token: string, mediaId: string, mediaType?: string): Promise<{ reach?: number; views?: number; saved?: number; shares?: number }> {
+  const metrics = mediaType === "CAROUSEL_ALBUM" ? "reach,saved,views" : "reach,saved,shares,views";
+  try {
+    const r = await call<{ data: { name: string; values?: { value: number }[]; total_value?: { value: number } }[] }>(`${ig(env)}/${mediaId}/insights?${new URLSearchParams({ metric: metrics })}`, { headers: bearer(token) });
+    return Object.fromEntries(r.data.map((m) => [m.name, m.total_value?.value ?? m.values?.[0]?.value ?? 0]));
+  } catch { return {}; }
+}

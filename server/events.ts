@@ -6,6 +6,8 @@ export const WEBHOOK_EVENTS = [
   { id: "publico.criado", label: "Público criado" },
   { id: "regra.criada", label: "Regra automática criada" },
   { id: "regra.alterada", label: "Regra ligada ou desligada" },
+  { id: "regra.disparou", label: "Regra automática agiu ou alertou" },
+  { id: "conversao.recebida", label: "Conversão recebida (tag do site ou API)" },
   { id: "mensagem.recebida", label: "Mensagem recebida (WhatsApp ou Instagram)" },
   { id: "mensagem.enviada", label: "Mensagem enviada pela equipe ou por um agente" },
   { id: "comentario.recebido", label: "Comentário ou menção no Instagram" },

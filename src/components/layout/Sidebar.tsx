@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/cn";
 import { useTheme, type ThemePreference } from "@/lib/theme";
-import { CONSOLE_NAV, CONSOLE_SETTINGS, NAV, SETTINGS_NAV, SYSTEM_NAV, findLeaf, findModule, isConsole, type NavItem, type NavLeaf } from "@/config/navigation";
+import { CONSOLE_NAV, CONSOLE_SETTINGS, LIVE_NAV, LIVE_SETTINGS_NAV, NAV, SETTINGS_NAV, SYSTEM_NAV, findLeaf, findModule, isConsole, liveModule, type NavItem, type NavLeaf } from "@/config/navigation";
 import { Avatar } from "@/components/ui/Badge";
 import { useAuth } from "@/lib/auth";
 import { useWorkspace } from "@/lib/workspace";
@@ -57,7 +57,7 @@ export function Sidebar({ collapsed, onToggleCollapsed, onNavigate, mobile }: { 
   const [showRoot, setShowRoot] = useState(false);
   useEffect(() => setShowRoot(false), [pathname]);
 
-  const drill = module && !showRoot ? module : undefined;
+  const drill = module && !showRoot ? (live ? liveModule(module) : module) : undefined;
   const isActiveLeaf = (l: NavLeaf) => leaf?.id === l.id;
   const isActiveTop = (m: NavItem) => module?.id === m.id || leaf?.id === m.id;
 
@@ -92,9 +92,9 @@ export function Sidebar({ collapsed, onToggleCollapsed, onNavigate, mobile }: { 
               <MenuItem onSelect={() => { navigate("/"); onNavigate?.(); }} icon={<span className="grid size-4 place-items-center rounded-[3px] bg-accent text-[8px] font-extrabold text-accent-ink">E</span>}>
                 <span className="flex flex-col"><span className="font-semibold">Estúdio{!consoleMode && " ✓"}</span><span className="t-caption">Suas próprias contas e canais</span></span>
               </MenuItem>
-              <MenuItem onSelect={() => { navigate("/console"); onNavigate?.(); }} icon={<span className="grid size-4 place-items-center rounded-[3px] bg-text text-[8px] font-extrabold text-text-inverse">C</span>}>
+              {!live && <MenuItem onSelect={() => { navigate("/console"); onNavigate?.(); }} icon={<span className="grid size-4 place-items-center rounded-[3px] bg-text text-[8px] font-extrabold text-text-inverse">C</span>}>
                 <span className="flex flex-col"><span className="font-semibold">Console{consoleMode && " ✓"}</span><span className="t-caption">Para os usuários do seu software</span></span>
-              </MenuItem>
+              </MenuItem>}
             </MenuContent>
           </Menu>
         </div>
@@ -125,7 +125,7 @@ export function Sidebar({ collapsed, onToggleCollapsed, onNavigate, mobile }: { 
             ))}
           </div>
         ) : (
-          NAV.map((g, gi) => (
+          (live ? LIVE_NAV : NAV).map((g, gi) => (
             <div key={g.id} className={cn(gi > 0 && "mt-5")}>
               {g.label && (collapsed ? <div className="mx-2 mb-3 h-px bg-line" /> : <p className="t-label mb-1.5 px-2.5 !text-[10px] !text-text-dim">{g.label}</p>)}
               <ul className="flex flex-col gap-0.5">
@@ -137,7 +137,7 @@ export function Sidebar({ collapsed, onToggleCollapsed, onNavigate, mobile }: { 
       </nav>
 
       <div className={cn("flex flex-col gap-0.5 border-t border-line py-3", collapsed ? "px-2" : "px-3")}>
-        {consoleMode ? <Entry item={CONSOLE_SETTINGS} active={pathname === CONSOLE_SETTINGS.path} collapsed={collapsed} onClick={onNavigate} /> : <Entry item={SETTINGS_NAV} active={module?.id === "settings"} collapsed={collapsed} hasChildren onClick={onNavigate} />}
+        {consoleMode ? <Entry item={CONSOLE_SETTINGS} active={pathname === CONSOLE_SETTINGS.path} collapsed={collapsed} onClick={onNavigate} /> : <Entry item={live ? LIVE_SETTINGS_NAV : SETTINGS_NAV} active={module?.id === "settings"} collapsed={collapsed} hasChildren onClick={onNavigate} />}
         {(!live || ws.isPlatformAdmin) && <Entry item={SYSTEM_NAV} active={leaf?.id === SYSTEM_NAV.id} collapsed={collapsed} onClick={onNavigate} />}
         <Menu>
           <MenuTrigger asChild>

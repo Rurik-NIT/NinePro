@@ -60,6 +60,7 @@ export const ROUTES: Route[] = [
   { method: "POST", path: "/regras", tool: "criar_regra", summary: "Criar regra automática" },
   { method: "PATCH", path: "/regras/{regra_id}", tool: "ativar_regra", summary: "Ligar ou desligar regra" },
   { method: "GET", path: "/conversoes", tool: "listar_conversoes", summary: "Listar eventos de conversão" },
+  { method: "POST", path: "/conversoes", tool: "registrar_conversao", summary: "Registrar conversão (API de eventos)" },
   { method: "GET", path: "/contas", tool: "listar_contas_anuncio", summary: "Listar contas de anúncio" },
   { method: "GET", path: "/canais", tool: "listar_canais", summary: "Listar números de WhatsApp e contas do Instagram" },
   { method: "GET", path: "/conversas", tool: "listar_conversas", summary: "Listar conversas (WhatsApp e Instagram)" },

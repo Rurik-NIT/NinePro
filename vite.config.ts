@@ -14,6 +14,8 @@ const API_ROUTES: { prefix: string; module: string; fn: string }[] = [
   { prefix: "/api/canais-webhook", module: "/server/channels.ts", fn: "handleChannelWebhook" },
   { prefix: "/api/canais", module: "/server/channels.ts", fn: "handleChannels" },
   { prefix: "/api/publicar", module: "/server/channels.ts", fn: "handlePublishDue" },
+  { prefix: "/api/eventos", module: "/server/ingest.ts", fn: "handleIngest" },
+  { prefix: "/api/regras", module: "/server/rules.ts", fn: "handleRules" },
   { prefix: "/api/mcp", module: "/server/agentApi.ts", fn: "handleMcp" },
   { prefix: "/api/v1", module: "/server/agentApi.ts", fn: "handleRest" },
 ];

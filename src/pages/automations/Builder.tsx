@@ -1,5 +1,7 @@
 import { Bell, Eye, Filter, Maximize2, Megaphone, Minus, Plus, Settings2, Trash2, Zap, CalendarClock, X } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { supabase } from "@/lib/supabase";
+import { useWorkspace } from "@/lib/workspace";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/cn";
 import { formatDateShort } from "@/lib/format";
@@ -53,7 +55,10 @@ const FREQ = [{ value: "15m", label: "A cada 15 minutos" }, { value: "1h", label
 
 type ChangeType = (typeof CHANGES)[number]["value"];
 interface ChangeNode { id: string; kind: "change"; change: ChangeType; amount: number }
-interface AlertNode { id: string; kind: "alert"; dest: "slack" | "email" | "" }
+interface AlertNode { id: string; kind: "alert"; dest: "slack" | "email" | "historico" | "" }
+/** O que o motor de regras executa sozinho (server/rules.ts). */
+const LIVE_METRICS: CondMetric[] = ["spend", "impressions", "clicks", "conversions", "ctr", "cpc", "cpm", "cpa", "roas", "dailyBudget", "budgetUsed", "dayOfMonth", "cac", "costPerSale"];
+const LIVE_CHANGES = ["pausar", "reativar", "orcamento", "mover"];
 type ActionNode = ChangeNode | AlertNode;
 type Selected = "start" | "cond" | string;
 
@@ -109,8 +114,16 @@ export default function AutomationBuilder() {
   const [conds, setConds] = useState<Condition[]>([{ metric: "spend", period: "hoje", op: ">", value: 0 }]);
   // Ações
   const [actions, setActions] = useState<ActionNode[]>([{ id: uid(), kind: "alert", dest: "" }]);
+  // Contas de anúncio reais (modo com banco)
+  const { current } = useWorkspace();
+  const [liveAccounts, setLiveAccounts] = useState<{ id: string; name: string; platform: string }[]>([]);
+  useEffect(() => {
+    if (!live || !supabase || !current) return;
+    void supabase.from("ad_accounts").select("id, name, platform").eq("workspace_id", current.id).order("name").then(({ data: rows }) => setLiveAccounts((rows as { id: string; name: string; platform: string }[] | null) ?? []));
+  }, [live, current]);
+  const accountLabel = live ? (account === "todas" ? "Todas as contas" : liveAccounts.find((a) => a.id === account)?.name ?? "") : account;
 
-  const startLines = trigger === "anuncios" ? [FREQ.find((f) => f.value === freq)!.label, account ? `Conta: ${account}` : "Escolha uma conta de anúncios"]
+  const startLines = trigger === "anuncios" ? [FREQ.find((f) => f.value === freq)!.label, account ? `Conta: ${accountLabel}` : "Escolha uma conta de anúncios"]
     : trigger === "publicacoes" ? [FREQ.find((f) => f.value === freq)!.label, profile ? `Perfil: ${profile}` : "Escolha um perfil"]
     : [event || "Escolha um evento", profile ? `Perfil: ${profile}` : "Escolha um perfil"];
   const condLines = trigger === "evento" && conds.length === 0 ? ["Sempre que acontecer"] : conds.length ? [conds.map(condText).join(logic === "E" ? " e " : " ou ")] : ["Sem condições"];
@@ -122,20 +135,25 @@ export default function AutomationBuilder() {
     trigger !== "anuncios" && !profile ? "Escolha o perfil no Início." : null,
     trigger === "evento" && !event ? "Escolha o evento que dispara a automação." : null,
     actions.some((a) => a.kind === "alert" && !a.dest) ? "Escolha para onde vai o alerta." : null,
+    live && trigger !== "anuncios" ? "Por enquanto, só automações de anúncios executam sozinhas. Para mensagens e comentários, use Caixa de entrada › Fluxos." : null,
+    live && trigger === "anuncios" && level !== "campanhas" ? "Por enquanto as regras agem no nível de campanha. Escolha “Campanhas” em Verificar cada." : null,
+    live && conds.some((c) => !LIVE_METRICS.includes(c.metric)) ? `A métrica “${metricLabel(conds.find((c) => !LIVE_METRICS.includes(c.metric))!.metric)}” ainda não é calculada automaticamente.` : null,
+    live && actions.some((a) => a.kind === "change" && !LIVE_CHANGES.includes(a.change)) ? "Ações que executam sozinhas: pausar, reativar o que uma regra pausou, ajustar orçamento diário e mover orçamento." : null,
   ].filter(Boolean) as string[];
-  const summary = { name: name.trim() || "Automação sem nome", condition: condLines[0], action: actions.map((a) => (a.kind === "alert" ? "Enviar alerta" : CHANGES.find((c) => c.value === a.change)!.label)).join(" → "), target: trigger === "anuncios" ? (account || "—") : (profile || "—") };
+  const summary = { name: name.trim() || "Automação sem nome", condition: condLines[0], action: actions.map((a) => (a.kind === "alert" ? "Enviar alerta" : CHANGES.find((c) => c.value === a.change)!.label)).join(" → "), target: trigger === "anuncios" ? (live ? "Todas as campanhas" : account || "—") : (profile || "—") };
+  const triggerData = { kind: trigger, freq, level, accountId: live && account !== "todas" ? account : "", accountName: accountLabel, nameFilter: nameFilter.trim(), minDays: Number(minDays) || 0 };
 
   const saveDraft = async () => {
-    if (live) { const err = await data.saveAutomation({ templateId: "custom", name: summary.name, target: summary.target, active: false, condition: summary.condition, action: summary.action, trigger: { kind: trigger }, conditions: conds, logic, actions }); toast(err ? { tone: "error", title: "Não foi possível salvar", description: err } : { tone: "success", title: "Rascunho salvo", description: "Fica em Todas as automações, desligado." }); return; }
+    if (live) { const err = await data.saveAutomation({ templateId: "custom", name: summary.name, target: summary.target, active: false, condition: summary.condition, action: summary.action, trigger: triggerData, conditions: conds, logic, actions }); toast(err ? { tone: "error", title: "Não foi possível salvar", description: err } : { tone: "success", title: "Rascunho salvo", description: "Fica em Todas as automações, desligado." }); return; }
     setDrafts((d) => [{ id: `d${Date.now()}`, ...summary, savedAt: new Date().toISOString() }, ...d]); toast({ tone: "success", title: "Rascunho salvo neste navegador" });
   };
   const activate = async () => {
     if (problems.length) { toast({ tone: "warning", title: "Falta pouco para ativar", description: problems[0] }); return; }
     if (live) {
-      const err = await data.saveAutomation({ templateId: "custom", name: summary.name, target: summary.target, active: true, condition: summary.condition, action: summary.action, trigger: { kind: trigger }, conditions: conds, logic, actions });
+      const err = await data.saveAutomation({ templateId: "custom", name: summary.name, target: summary.target, active: true, condition: summary.condition, action: summary.action, trigger: triggerData, conditions: conds, logic, actions });
       if (err) { toast({ tone: "error", title: "Não foi possível ativar", description: err }); return; }
       setStatus("Ativa");
-      toast({ tone: "success", title: "Automação ativada", description: "Salva no banco. A execução nas plataformas exige integração." });
+      toast({ tone: "success", title: "Automação ativada", description: "O NinePro verifica de hora em hora e age nas plataformas conectadas." });
       navigate("/automacoes"); return;
     }
     setRules((r) => [...r, { id: `rule-${Date.now()}`, templateId: "custom", name: summary.name, target: summary.target, active: true, createdAt: new Date().toISOString(), condition: summary.condition, action: summary.action }]);
@@ -173,7 +191,7 @@ export default function AutomationBuilder() {
                   <Connector />
                   {a.kind === "change"
                     ? <NodeCard icon={<Settings2 />} kicker="Alterar" lines={[CHANGES.find((c) => c.value === a.change)!.label + ("amount" in CHANGES.find((c) => c.value === a.change)! ? ` (${a.amount > 0 ? "+" : ""}${a.amount}%)` : "")]} selected={selected === a.id} onClick={() => setSelected(a.id)} onDelete={() => { setActions((x) => x.filter((y) => y.id !== a.id)); setSelected("cond"); }} />
-                    : <NodeCard icon={<Bell />} kicker="Enviar alerta" lines={[a.dest === "slack" ? "Slack" : a.dest === "email" ? "E-mail" : "Escolha para onde vai"]} selected={selected === a.id} onClick={() => setSelected(a.id)} />}
+                    : <NodeCard icon={<Bell />} kicker="Enviar alerta" lines={[a.dest === "slack" ? "Slack" : a.dest === "email" ? "E-mail" : a.dest === "historico" ? "Histórico e webhooks" : "Escolha para onde vai"]} selected={selected === a.id} onClick={() => setSelected(a.id)} />}
                 </div>
               ))}
             </div>
@@ -207,7 +225,7 @@ export default function AutomationBuilder() {
                     {trigger === "anuncios" ? (
                       <>
                         <Labeled label="Conexão"><Select size="sm" value={account || undefined} onValueChange={setAccount} placeholder="Escolha a conta de anúncios"
-                          options={[{ value: "Loja Aurora — BM principal", label: "Loja Aurora — BM principal", icon: <PlatformDot id="meta" /> }, { value: "Aurora Search", label: "Aurora Search", icon: <PlatformDot id="google" /> }, { value: "Aurora TikTok", label: "Aurora TikTok", icon: <PlatformDot id="tiktok" /> }]} /></Labeled>
+                          options={live ? [{ value: "todas", label: "Todas as contas" }, ...liveAccounts.map((a) => ({ value: a.id, label: a.name, icon: ["meta", "google", "tiktok", "linkedin"].includes(a.platform) ? <PlatformDot id={a.platform as "meta"} /> : undefined }))] : [{ value: "Loja Aurora — BM principal", label: "Loja Aurora — BM principal", icon: <PlatformDot id="meta" /> }, { value: "Aurora Search", label: "Aurora Search", icon: <PlatformDot id="google" /> }, { value: "Aurora TikTok", label: "Aurora TikTok", icon: <PlatformDot id="tiktok" /> }]} /></Labeled>
                         <Labeled label="Verificar cada"><SegmentedControl ariaLabel="Nível" size="sm" value={level} onValueChange={setLevel} options={[{ value: "campanhas", label: "Campanhas" }, { value: "conjuntos", label: "Conjuntos" }, { value: "anuncios", label: "Anúncios" }]} /></Labeled>
                         <Labeled label="Onde está o orçamento"><Select size="sm" value={budgetWhere} onValueChange={setBudgetWhere} options={[{ value: "qualquer", label: "Em qualquer nível" }, { value: "campanha", label: "Na campanha (CBO)" }, { value: "conjunto", label: "No conjunto" }]} /></Labeled>
                         <Labeled label="Ativo há pelo menos (opcional)"><div className="flex items-center gap-2"><Input size="sm" inputMode="numeric" value={minDays} onChange={(e) => setMinDays(e.target.value.replace(/\D/g, ""))} placeholder="Qualquer" wrapperClassName="w-24" /><span className="t-caption">dias</span></div></Labeled>
@@ -261,11 +279,13 @@ export default function AutomationBuilder() {
               {a.change === "reativar" && <InlineNotice tone="info">Só reativa o que uma regra pausou — nunca o que alguém pausou manualmente.</InlineNotice>}
             </Inspector>
           ) : (
-            <Inspector key={a.id} title="Enviar alerta" subtitle={a.dest ? (a.dest === "slack" ? "Slack" : "E-mail") : "Escolha para onde vai"} icon={<Bell />}>
+            <Inspector key={a.id} title="Enviar alerta" subtitle={a.dest ? (a.dest === "slack" ? "Slack" : a.dest === "historico" ? "Histórico e webhooks" : "E-mail") : "Escolha para onde vai"} icon={<Bell />}>
               <div className="flex gap-2">
                 <Tooltip content="Conecte o Slack em Configurações › Notificações"><span tabIndex={0}><Button size="sm" icon={<Plus />} disabled>Alerta no Slack</Button></span></Tooltip>
-                <Button size="sm" icon={<Plus />} variant={a.dest === "email" ? "secondary" : "outline"} onClick={() => updateAction(a.id, { dest: "email" })}>Alerta por e-mail</Button>
+                {live ? <Button size="sm" icon={<Plus />} variant={a.dest === "historico" ? "secondary" : "outline"} onClick={() => updateAction(a.id, { dest: "historico" })}>Histórico e webhooks</Button>
+                  : <Button size="sm" icon={<Plus />} variant={a.dest === "email" ? "secondary" : "outline"} onClick={() => updateAction(a.id, { dest: "email" })}>Alerta por e-mail</Button>}
               </div>
+              {a.dest === "historico" && <p className="t-secondary">O alerta aparece no histórico da regra e é enviado aos seus webhooks (evento regra.disparou), que podem levar ao Slack, e-mail ou WhatsApp da equipe.</p>}
               {a.dest === "email" && <p className="t-secondary">O alerta vai para o e-mail de alertas definido em Configurações › Notificações.</p>}
             </Inspector>
           )))}

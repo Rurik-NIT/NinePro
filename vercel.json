@@ -60,16 +60,23 @@
     },
     "api/publicar.ts": {
       "maxDuration": 300
+    },
+    "api/regras.ts": {
+      "maxDuration": 300
     }
   },
   "crons": [
     {
       "path": "/api/sync",
-      "schedule": "0 9 * * *"
+      "schedule": "0 * * * *"
     },
     {
       "path": "/api/publicar",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/regras",
+      "schedule": "20 * * * *"
     }
   ]
 }

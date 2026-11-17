@@ -42,6 +42,9 @@ const posts = () => import("@/pages/posts/Posts");
 const analytics = () => import("@/pages/analytics/Analytics");
 const liveInbox = () => import("@/pages/channels/LiveInbox");
 const liveSocial = () => import("@/pages/channels/LiveSocial");
+const liveExtras = () => import("@/pages/channels/LiveExtras");
+const liveWs = () => import("@/pages/live/LiveWorkspace");
+const LiveRules = lazy(() => import("@/pages/automations/LiveRules"));
 const LiveComments = lazy(() => import("@/pages/channels/LiveInbox").then((m) => ({ default: () => <m.LiveInboxComments kind="comment" /> })));
 const LiveMentions = lazy(() => import("@/pages/channels/LiveInbox").then((m) => ({ default: () => <m.LiveInboxComments kind="mention" /> })));
 const biz = () => import("@/pages/misc/Business");
@@ -79,17 +82,17 @@ const router = createBrowserRouter([
       { path: "publicacoes/hashtags", element: <Navigate to="/conexoes" replace /> },
       { path: "ao-vivo", element: <Navigate to="/conexoes" replace /> },
 
-      { path: "analises/publicacoes", element: <DemoOnly title="Análises de publicações" area="as redes sociais">{N(analytics, "AnalyticsPosting")}</DemoOnly> },
-      { path: "analises/caixa-de-entrada", element: <DemoOnly title="Análises da caixa de entrada" area="as redes sociais">{N(analytics, "AnalyticsInbox")}</DemoOnly> },
-      { path: "analises/site", element: <DemoOnly title="Análises do site" area="a tag do site">{N(analytics, "AnalyticsWebsite")}</DemoOnly> },
+      { path: "analises/publicacoes", element: L(N(liveExtras, "LivePostAnalytics"), N(analytics, "AnalyticsPosting")) },
+      { path: "analises/caixa-de-entrada", element: L(N(liveExtras, "LiveInboxAnalytics"), N(analytics, "AnalyticsInbox")) },
+      { path: "analises/site", element: L(N(liveWs, "LiveSiteAnalytics"), N(analytics, "AnalyticsWebsite")) },
 
       { path: "caixa-de-entrada/mensagens", element: L(N(liveInbox, "LiveInboxMessages"), N(inbox, "InboxMessages")) },
       { path: "caixa-de-entrada/comentarios", element: L(S(<LiveComments />), N(inbox, "InboxComments")) },
       { path: "caixa-de-entrada/avaliacoes", element: <DemoOnly title="Avaliações" area="as redes sociais">{N(inbox, "InboxReviews")}</DemoOnly> },
       { path: "caixa-de-entrada/mencoes", element: L(S(<LiveMentions />), N(inbox, "InboxMentions")) },
-      { path: "caixa-de-entrada/campanhas", element: <DemoOnly title="Campanhas de mensagens" area="as redes sociais">{N(inbox, "InboxCampaigns")}</DemoOnly> },
-      { path: "caixa-de-entrada/fluxos", element: <DemoOnly title="Fluxos" area="as redes sociais">{N(inbox, "InboxWorkflows")}</DemoOnly> },
-      { path: "caixa-de-entrada/contatos", element: <DemoOnly title="Contatos" area="as redes sociais">{N(inbox, "InboxContacts")}</DemoOnly> },
+      { path: "caixa-de-entrada/campanhas", element: L(N(liveExtras, "LiveBroadcasts"), N(inbox, "InboxCampaigns")) },
+      { path: "caixa-de-entrada/fluxos", element: L(N(liveExtras, "LiveFlows"), N(inbox, "InboxWorkflows")) },
+      { path: "caixa-de-entrada/contatos", element: L(N(liveExtras, "LiveContacts"), N(inbox, "InboxContacts")) },
 
       { path: "anuncios", element: S(<Dashboard />) },
       { path: "anuncios/campanhas", element: S(<Campaigns />) },
@@ -98,7 +101,7 @@ const router = createBrowserRouter([
       { path: "anuncios/conversoes", element: N(conv, "ConversionsOverview") },
       { path: "anuncios/conversoes/eventos", element: N(conv, "ConversionEvents") },
       { path: "anuncios/conversoes/destinos", element: N(conv, "ConversionDestinations") },
-      { path: "anuncios/conversoes/fontes", element: <DemoOnly title="Fontes de conversão" area="a tag do site e as lojas">{N(conv, "ConversionSources")}</DemoOnly> },
+      { path: "anuncios/conversoes/fontes", element: L(N(liveWs, "LiveConversionSources"), N(conv, "ConversionSources")) },
       { path: "anuncios/publicos", element: N(assets, "Audiences") },
       { path: "anuncios/formularios", element: N(assets, "LeadForms") },
       { path: "anuncios/palavras-chave", element: hidden("Palavras-chave", "Palavras-chave das campanhas de pesquisa, com desempenho por termo.") },
@@ -108,8 +111,8 @@ const router = createBrowserRouter([
       { path: "anuncios/parcerias", element: hidden("Anúncios de parceria", "Anúncios veiculados com perfis de criadores e parceiros.") },
       { path: "anuncios/conta", element: hidden("Conta de anúncios", "Visão por conta de anúncios conectada.") },
 
-      { path: "automacoes", element: S(<Automations />) },
-      { path: "automacoes/modelos", element: S(<Automations defaultTab="modelos" />) },
+      { path: "automacoes", element: L(S(<LiveRules />), S(<Automations />)) },
+      { path: "automacoes/modelos", element: L(S(<LiveRules defaultTab="modelos" />), S(<Automations defaultTab="modelos" />)) },
       { path: "automacoes/nova", element: S(<Builder />) },
 
       { path: "comercio/produtos", element: <DemoOnly title="Produtos" area="a sua loja">{N(biz, "CommerceProducts")}</DemoOnly> },
@@ -137,7 +140,7 @@ const router = createBrowserRouter([
 
       { path: "integracao", element: S(<AgentIntegration />) },
       { path: "chaves-api", element: N(dev, "ApiKeys") },
-      { path: "usuarios", element: <DemoOnly title="Usuários" area="o convite de equipe">{N(dev, "Members")}</DemoOnly> },
+      { path: "usuarios", element: L(N(liveWs, "LiveTeam"), N(dev, "Members")) },
       { path: "webhooks", element: N(dev, "Webhooks") },
       { path: "logs", element: N(dev, "Logs") },
 
