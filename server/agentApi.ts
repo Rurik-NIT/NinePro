@@ -33,13 +33,13 @@ async function authenticate(req: Request, sb: SupabaseClient, env: Env): Promise
   const raw = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim() || (req.headers.get("x-api-key") ?? "").trim();
   if (!raw) return fail(401, "Envie a chave de API no cabeçalho Authorization: Bearer np_live_… ou conecte pelo OAuth.");
   if (raw.startsWith("npo_at_")) {
-    const { data: t, error: te } = await sb.from("oauth_tokens").select("id, workspace_id, client_name, scopes, access_expires_at, revoked_at, last_used_at").eq("access_hash", await sha256Hex(raw)).maybeSingle();
+    const { data: t, error: te } = await sb.from("oauth_tokens").select("id, workspace_id, user_id, client_name, scopes, access_expires_at, revoked_at, last_used_at").eq("access_hash", await sha256Hex(raw)).maybeSingle();
     if (te) return fail(500, te.message);
     if (!t || t.revoked_at) return fail(401, "Token inválido ou conexão desfeita. Conecte o NinePro de novo.");
     if (Date.parse(t.access_expires_at as string) < Date.now()) return fail(401, "Token expirado. Renove com o refresh token.");
     if (!t.last_used_at || Date.now() - Date.parse(t.last_used_at as string) > 60_000) await sb.from("oauth_tokens").update({ last_used_at: new Date().toISOString() }).eq("id", t.id);
     const scopes = t.scopes as string[];
-    return { ctx: { sb, ws: t.workspace_id as string, canWrite: scopes.some((s) => s !== "leitura"), scopes, env }, keyId: t.id as string, keyName: `${t.client_name as string} (OAuth)` };
+    return { ctx: { sb, ws: t.workspace_id as string, canWrite: scopes.some((s) => s !== "leitura" && s !== "todos_espacos"), scopes, env, userId: (t.user_id as string | null) ?? null, multi: scopes.includes("todos_espacos"), origin: originOf(req, env) }, keyId: t.id as string, keyName: `${t.client_name as string} (OAuth)` };
   }
   if (!/^np_live_[0-9a-f]{20,}$/.test(raw)) return fail(401, "Chave de API inválida.");
   const { data, error } = await sb.from("api_keys").select("id, name, workspace_id, permission, revoked_at").eq("key_hash", await sha256Hex(raw)).maybeSingle();
@@ -48,7 +48,7 @@ async function authenticate(req: Request, sb: SupabaseClient, env: Env): Promise
   if (data.revoked_at) return fail(401, "Esta chave foi revogada.");
   await sb.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", data.id);
   const canWrite = data.permission === "Leitura e escrita";
-  return { ctx: { sb, ws: data.workspace_id as string, canWrite, scopes: canWrite ? ALL_SCOPES : ["leitura"], env }, keyId: data.id as string, keyName: data.name as string };
+  return { ctx: { sb, ws: data.workspace_id as string, canWrite, scopes: canWrite ? ALL_SCOPES : ["leitura"], env, origin: originOf(req, env) }, keyId: data.id as string, keyName: data.name as string };
 }
 
 async function logRequest(sb: SupabaseClient, ws: string, keyName: string, activity: string, status: number, started: number) {
@@ -228,7 +228,7 @@ async function mcpOne(msg: RpcReq, auth: KeyAuth) {
     }
     case "ping": return rpcOk(msg.id, {});
     case "tools/list":
-      return rpcOk(msg.id, { tools: TOOLS.filter((t) => allowed(auth.ctx, t)).map((t) => ({ name: t.name, title: t.title, description: t.description, inputSchema: t.input, annotations: { title: t.title, readOnlyHint: !t.write, destructiveHint: false, openWorldHint: false } })) });
+      return rpcOk(msg.id, { tools: TOOLS.filter((t) => allowed(auth.ctx, t)).map((t) => ({ name: t.name, title: t.title, description: t.description, inputSchema: auth.ctx.multi ? { ...t.input, properties: { ...t.input.properties, perfil_id: { type: "string", format: "uuid", description: "Espaço do cliente (listar_perfis). Vazio = espaço padrão da conexão." } } } : t.input, annotations: { title: t.title, readOnlyHint: !t.write, destructiveHint: false, openWorldHint: false } })) });
     case "tools/call": {
       const name = String(msg.params?.name ?? "");
       let status = 200;

@@ -50,7 +50,7 @@ export const originOf = (req: Request, env: Env) => { const u = new URL(req.url)
 /** Escopos pedidos → só os conhecidos; vazio = todos. */
 export const parseScopes = (raw: unknown) => {
   const list = (Array.isArray(raw) ? raw.map(String) : String(raw ?? "").split(/[\s,]+/)).map((s) => s.trim()).filter(Boolean);
-  const known = [...new Set(list.filter((s) => ALL_SCOPES.includes(s)))];
+  const known = [...new Set(list.filter((s) => ALL_SCOPES.includes(s) || s === "todos_espacos"))];
   return known.length ? known : list.length ? ["leitura"] : [...ALL_SCOPES];
 };
 
@@ -78,7 +78,7 @@ export function redirectAllowed(registered: string[], asked: string) {
 
 /* ------------------------------------------------------------------ metadados */
 function protectedResource(origin: string) {
-  return { resource: `${origin}/api/mcp`, authorization_servers: [origin], scopes_supported: ALL_SCOPES, bearer_methods_supported: ["header"], resource_name: "NinePro", resource_documentation: `${origin}/integracao` };
+  return { resource: `${origin}/api/mcp`, authorization_servers: [origin], scopes_supported: [...ALL_SCOPES, "todos_espacos"], bearer_methods_supported: ["header"], resource_name: "NinePro", resource_documentation: `${origin}/integracao` };
 }
 function authServer(origin: string) {
   return {

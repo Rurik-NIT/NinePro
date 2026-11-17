@@ -741,7 +741,7 @@ async function runCommentFlows(sb: SupabaseClient, env: Env, acc: Account, comme
 }
 
 /* ------------------------------------------------------------------ disparos do WhatsApp (modelo para uma lista) */
-async function createBroadcast(ctx: ChannelCtx, p: Json) {
+export async function createBroadcast(ctx: ChannelCtx, p: Json) {
   const name = String(p.name ?? "").trim().slice(0, 120) || "Disparo";
   const templateId = String(p.templateId ?? "");
   const { data: tpl } = await ctx.sb.from("wa_templates").select("id, name, status").eq("workspace_id", ctx.ws).eq("id", templateId).maybeSingle();

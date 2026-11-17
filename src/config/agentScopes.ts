@@ -7,4 +7,4 @@ export const AGENT_SCOPES: { id: string; titulo: string; descricao: string; sens
   { id: "anuncios", titulo: "Gerenciar anúncios", descricao: "Pausar e ativar campanhas, criar públicos e regras automáticas. Pode alterar seu investimento", sensivel: true },
   { id: "crm", titulo: "Leads e conversões", descricao: "Registrar leads, mudar o status e enviar conversões" },
 ];
-export const scopeTitle = (id: string) => AGENT_SCOPES.find((s) => s.id === id)?.titulo ?? id;
+export const scopeTitle = (id: string) => (id === "todos_espacos" ? "Todos os espaços" : AGENT_SCOPES.find((s) => s.id === id)?.titulo ?? id);

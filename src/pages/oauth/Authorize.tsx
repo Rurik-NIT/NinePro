@@ -34,6 +34,7 @@ export default function Authorize() {
   const [wsId, setWsId] = useState(current?.id ?? "");
   const [scopes, setScopes] = useState<string[]>(requested);
   const [busy, setBusy] = useState(false);
+  const [allWs, setAllWs] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const role = workspaces.find((w) => w.id === wsId)?.role ?? "member";
   const isMember = role === "member";
@@ -59,7 +60,7 @@ export default function Authorize() {
   const allow = async () => {
     setBusy(true); setError(null);
     try {
-      const { code } = await appCall<{ code: string }>({ action: "oauth_approve", clientId, redirectUri, codeChallenge: p.get("code_challenge"), codeChallengeMethod: p.get("code_challenge_method") ?? "S256", scopes, workspaceId: wsId, resource: p.get("resource") ?? "" });
+      const { code } = await appCall<{ code: string }>({ action: "oauth_approve", clientId, redirectUri, codeChallenge: p.get("code_challenge"), codeChallengeMethod: p.get("code_challenge_method") ?? "S256", scopes: allWs ? [...scopes, "todos_espacos"] : scopes, workspaceId: wsId, resource: p.get("resource") ?? "" });
       back({ code });
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); setBusy(false); }
   };
@@ -89,11 +90,16 @@ export default function Authorize() {
 
               {workspaces.length > 1 && (
                 <label className="flex flex-col gap-1.5">
-                  <span className="t-label">Espaço de trabalho</span>
+                  <span className="t-label">{allWs ? "Espaço padrão" : "Espaço de trabalho"}</span>
                   <select className="h-9 rounded-md border border-line bg-surface px-2.5 text-body text-text" value={wsId} onChange={(e) => setWsId(e.target.value)}>
                     {workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
                   </select>
                 </label>
+              )}
+
+              {workspaces.length > 1 && (
+                <Checkbox checked={allWs} onCheckedChange={setAllWs} className="rounded-md border border-line p-3"
+                  label={`Todos os meus espaços (${workspaces.length})`} description="Para agências: o agente pode agir em qualquer cliente seu, escolhendo o perfil a cada pedido. Onde você é membro, só leitura." />
               )}
 
               <div className="flex flex-col gap-1.5">

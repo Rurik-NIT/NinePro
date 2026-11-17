@@ -32,6 +32,7 @@ const Admin = lazy(() => import("@/pages/admin/Admin"));
 const AgentIntegration = lazy(() => import("@/pages/dev/AgentIntegration"));
 const Builder = lazy(() => import("@/pages/automations/Builder"));
 const OAuthAuthorize = lazy(() => import("@/pages/oauth/Authorize"));
+const MediaUpload = lazy(() => import("@/pages/oauth/Upload"));
 
 const conv = () => import("@/pages/ads/Conversions");
 const assets = () => import("@/pages/ads/Assets");
@@ -72,6 +73,8 @@ const router = createBrowserRouter([
   { path: "/termos", element: S(<Terms />) },
   { path: "/exclusao-de-dados", element: S(<DataDeletion />) },
   /* Autorização de agentes de IA (OAuth): exige login, sem o menu do app */
+  /* Envio de mídia pelo link do agente de IA (público, protegido pelo token) */
+  { path: "/enviar/:token", element: S(<MediaUpload />) },
   { path: "/oauth/autorizar", element: <RequireAuth>{S(<OAuthAuthorize />)}</RequireAuth> },
   {
     path: "/",

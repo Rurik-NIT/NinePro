@@ -5,11 +5,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dispatchEvent } from "./webhooks.js";
 import { applyCampaignStatus } from "./connections.js";
-import { refreshMediaStats, replyComment, savePost, sendTemplate, sendToConversation } from "./channels.js";
+import { createBroadcast, publishPost, refreshMediaStats, replyComment, savePost, sendTemplate, sendToConversation } from "./channels.js";
+import { listUploads, makeUploadToken, readUploadToken } from "./media.js";
+import { WEBHOOK_EVENTS } from "./events.js";
 import { PlatformError } from "./platforms/types.js";
 import { registerConversion } from "./ingest.js";
 
-export interface ToolCtx { sb: SupabaseClient; ws: string; canWrite: boolean; scopes?: string[]; env: Record<string, string | undefined> }
+export interface ToolCtx { sb: SupabaseClient; ws: string; canWrite: boolean; scopes?: string[]; env: Record<string, string | undefined>; userId?: string | null; multi?: boolean; origin?: string }
 type Json = Record<string, unknown>;
 type Schema = { type: "object"; properties: Record<string, Json>; required?: string[]; additionalProperties?: boolean };
 export interface Tool { name: string; title: string; description: string; write: boolean; input: Schema; run: (ctx: ToolCtx, args: Json) => Promise<unknown> }
@@ -385,14 +387,23 @@ export const TOOLS: Tool[] = [
     run: async (ctx, a) => channel(() => replyComment({ sb: ctx.sb, env: ctx.env, ws: ctx.ws, userId: null }, needUuid(a.comentario_id, "comentario_id"), str(a.texto, 2200), a.privada === true)),
   },
   {
-    name: "publicar_instagram", title: "Publicar ou agendar no Instagram", write: true,
-    description: "Publica agora ou agenda uma publicação no Instagram. As mídias precisam ser URLs públicas https (JPEG para imagem, MP4 para vídeo).",
+    name: "publicar_instagram", title: "Publicar, agendar ou salvar rascunho no Instagram", write: true,
+    description: "Publica agora, agenda ou salva rascunho no Instagram (post, reels, carrossel ou stories). Mídias: URLs públicas https (use gerar_link_de_envio para arquivos do computador). Com mais de uma conta do Instagram, informe 'contas'; sem isso a ferramenta devolve a lista para escolher. Mostre à pessoa a conta, a legenda e a mídia e peça aprovação antes de publicar.",
     input: { type: "object", properties: {
-      legenda: { type: "string", maxLength: 2200 }, contas: { type: "array", items: { type: "string", format: "uuid" }, description: "IDs das contas (listar_canais)" },
+      legenda: { type: "string", maxLength: 2200 }, contas: { type: "array", items: { type: "string", format: "uuid" }, description: "IDs das contas (listar_contas_conectadas). Opcional se houver só uma." },
       midias: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 10 }, tipo: { type: "string", enum: ["IMAGE", "REELS", "CAROUSEL", "STORIES"] },
-      agendar_para: { type: "string", format: "date-time", description: "Vazio = publicar agora" },
-    }, required: ["contas", "midias"], additionalProperties: false },
-    run: async (ctx, a) => channel(() => savePost({ sb: ctx.sb, env: ctx.env, ws: ctx.ws, userId: null }, { content: str(a.legenda, 2200), accountIds: a.contas, mediaUrls: a.midias, mediaType: a.tipo, scheduledAt: a.agendar_para, mode: a.agendar_para ? "agendar" : "agora" })),
+      agendar_para: { type: "string", format: "date-time", description: "Vazio = publicar agora" }, rascunho: { type: "boolean", description: "true = só salva como rascunho" },
+    }, required: ["midias"], additionalProperties: false },
+    run: async (ctx, a) => {
+      let contas = (Array.isArray(a.contas) ? a.contas : []).map((c) => str(c, 64)).filter(Boolean);
+      if (!contas.length) {
+        const ig = await q<Json[]>(ctx.sb.from("channel_accounts").select("id, name").eq("workspace_id", ctx.ws).eq("kind", "instagram").eq("status", "ativo"));
+        if (!ig.length) throw new ToolError(400, "Nenhuma conta do Instagram conectada neste espaço.");
+        if (ig.length > 1) throw new ToolError(400, `Há ${ig.length} contas do Instagram. Informe 'contas' com uma ou mais destas: ${ig.map((c) => `${c.name} (${c.id})`).join(", ")}.`);
+        contas = [ig[0].id as string];
+      }
+      return channel(() => savePost({ sb: ctx.sb, env: ctx.env, ws: ctx.ws, userId: null }, { content: str(a.legenda, 2200), accountIds: contas, mediaUrls: a.midias, mediaType: a.tipo, scheduledAt: a.agendar_para, mode: a.rascunho === true ? "rascunho" : a.agendar_para ? "agendar" : "agora" }));
+    },
   },
   /* ---------------------------------------------------------------- contas, análises e automações (agente gestor de redes sociais) */
   {
@@ -536,6 +547,153 @@ export const TOOLS: Tool[] = [
       return { automacao: await q<Json>(ctx.sb.from("inbox_flows").update({ status: acao === "ativar" ? "ativo" : "pausado", updated_at: new Date().toISOString() }).eq("id", id).select("id, name, status").single()) };
     },
   },
+  /* ---------------------------------------------------------------- mídia, publicações, perfis, disparos e webhooks */
+  {
+    name: "gerar_link_de_envio", title: "Gerar link para enviar fotos e vídeos", write: true,
+    description: "Você (agente) não consegue ler arquivos do computador da pessoa. Gere este link, entregue a ela para abrir no navegador e soltar as fotos ou vídeos (até 20 arquivos, vale 30 minutos). Quando ela disser que terminou, chame verificar_envio com o token para receber as URLs e publicar.",
+    input: { type: "object", properties: {}, additionalProperties: false },
+    run: async (ctx) => {
+      const t = makeUploadToken(ctx.env, ctx.ws);
+      const origin = (ctx.env.PUBLIC_URL || ctx.origin || "https://ninepro.vercel.app").replace(/\/$/, "");
+      return { link: `${origin}/enviar/${t.token}`, token: t.token, expira_em: t.expiresAt, instrucoes: "Abra o link no navegador, solte as fotos ou vídeos e me avise quando terminar." };
+    },
+  },
+  {
+    name: "verificar_envio", title: "Verificar arquivos enviados pelo link", write: false,
+    description: "Situação de um link de envio: pendente (nada enviado ainda), expirado ou concluído, com nome, tipo, tamanho e URL pública de cada arquivo. Use 'midias' direto em publicar_instagram.",
+    input: { type: "object", properties: { token: { type: "string", description: "Token devolvido por gerar_link_de_envio" } }, required: ["token"], additionalProperties: false },
+    run: async (ctx, a) => {
+      const t = readUploadToken(ctx.env, str(a.token, 400));
+      if (!t || t.ws !== ctx.ws) throw new ToolError(400, "Token de envio inválido para este espaço.");
+      const arquivos = await listUploads(ctx.sb, t.ws, t.id);
+      return { status: arquivos.length ? "concluido" : t.expired ? "expirado" : "pendente", arquivos, midias: arquivos.filter((f) => f.tipo.startsWith("image/") || f.tipo.startsWith("video/")).map((f) => f.url) };
+    },
+  },
+  {
+    name: "detalhar_publicacao", title: "Detalhar publicação", write: false,
+    description: "Uma publicação do NinePro: legenda, mídias, contas, status, agendamento, resultado por conta e erro.",
+    input: { type: "object", properties: { publicacao_id: { type: "string", format: "uuid" } }, required: ["publicacao_id"], additionalProperties: false },
+    run: async (ctx, a) => {
+      const p = await q<Json | null>(ctx.sb.from("posts").select("id, content, status, media_type, media_urls, channel_account_ids, scheduled_at, published_at, result, error, attempts, created_at, updated_at").eq("workspace_id", ctx.ws).eq("id", needUuid(a.publicacao_id, "publicacao_id")).maybeSingle());
+      if (!p) throw new ToolError(404, "Publicação não encontrada neste espaço.");
+      return { publicacao: { id: p.id, status: p.status, legenda: p.content, formato: p.media_type, midias: p.media_urls, contas: p.channel_account_ids, agendada_para: p.scheduled_at, publicada_em: p.published_at, tentativas: p.attempts, erro: p.error, resultado: p.result } };
+    },
+  },
+  {
+    name: "editar_publicacao", title: "Editar publicação", write: true,
+    description: "Altera legenda, mídias, contas ou horário de uma publicação em rascunho, agendada ou que falhou. Publicadas não podem ser editadas.",
+    input: { type: "object", properties: {
+      publicacao_id: { type: "string", format: "uuid" }, legenda: { type: "string", maxLength: 2200 }, midias: { type: "array", items: { type: "string" }, maxItems: 10 },
+      contas: { type: "array", items: { type: "string", format: "uuid" } }, tipo: { type: "string", enum: ["IMAGE", "REELS", "CAROUSEL", "STORIES"] },
+      agendar_para: { type: "string", format: "date-time", description: "Novo horário. Vazio mantém como está." }, rascunho: { type: "boolean", description: "true = volta para rascunho (sai da fila)." },
+    }, required: ["publicacao_id"], additionalProperties: false },
+    run: async (ctx, a) => {
+      const id = needUuid(a.publicacao_id, "publicacao_id");
+      const p = await q<Json | null>(ctx.sb.from("posts").select("id, status, content, media_urls, media_type, channel_account_ids, scheduled_at").eq("workspace_id", ctx.ws).eq("id", id).maybeSingle());
+      if (!p) throw new ToolError(404, "Publicação não encontrada neste espaço.");
+      if (p.status === "publicada") throw new ToolError(409, "Publicação já publicada não pode ser editada. Crie uma nova.");
+      const when = str(a.agendar_para, 40) || (p.status === "agendada" ? (p.scheduled_at as string) : "");
+      const mode = a.rascunho === true ? "rascunho" : when ? "agendar" : p.status === "agendada" ? "agendar" : "rascunho";
+      return channel(() => savePost({ sb: ctx.sb, env: ctx.env, ws: ctx.ws, userId: null }, { id, content: a.legenda !== undefined ? str(a.legenda, 2200) : p.content, mediaUrls: Array.isArray(a.midias) ? a.midias : p.media_urls, accountIds: Array.isArray(a.contas) ? a.contas : p.channel_account_ids, mediaType: a.tipo ?? p.media_type, scheduledAt: when || undefined, mode }));
+    },
+  },
+  {
+    name: "excluir_publicacao", title: "Excluir publicação", write: true,
+    description: "Exclui uma publicação em rascunho, agendada ou que falhou. O que já foi publicado no Instagram continua lá (a API do Instagram não permite apagar).",
+    input: { type: "object", properties: { publicacao_id: { type: "string", format: "uuid" } }, required: ["publicacao_id"], additionalProperties: false },
+    run: async (ctx, a) => {
+      const id = needUuid(a.publicacao_id, "publicacao_id");
+      const p = await q<Json | null>(ctx.sb.from("posts").select("id, status").eq("workspace_id", ctx.ws).eq("id", id).maybeSingle());
+      if (!p) throw new ToolError(404, "Publicação não encontrada neste espaço.");
+      if (p.status === "publicada") throw new ToolError(409, "Já foi publicada: apague direto no Instagram, se quiser.");
+      await q(ctx.sb.from("posts").delete().eq("id", id));
+      return { ok: true, excluida: id };
+    },
+  },
+  {
+    name: "publicar_agora", title: "Publicar agora uma publicação existente", write: true,
+    description: "Publica imediatamente um rascunho ou uma publicação agendada.",
+    input: { type: "object", properties: { publicacao_id: { type: "string", format: "uuid" } }, required: ["publicacao_id"], additionalProperties: false },
+    run: async (ctx, a) => {
+      const id = needUuid(a.publicacao_id, "publicacao_id");
+      const p = await q<Json | null>(ctx.sb.from("posts").select("id, status, content, media_urls, media_type, channel_account_ids").eq("workspace_id", ctx.ws).eq("id", id).maybeSingle());
+      if (!p) throw new ToolError(404, "Publicação não encontrada neste espaço.");
+      if (p.status === "publicada") throw new ToolError(409, "Esta publicação já foi publicada.");
+      return channel(() => savePost({ sb: ctx.sb, env: ctx.env, ws: ctx.ws, userId: null }, { id, content: p.content, mediaUrls: p.media_urls, accountIds: p.channel_account_ids, mediaType: p.media_type, mode: "agora" }));
+    },
+  },
+  {
+    name: "tentar_novamente", title: "Tentar de novo publicações que falharam", write: true,
+    description: "Publica de novo uma publicação que falhou (publicacao_id) ou todas as que falharam nos últimos 7 dias (todas=true).",
+    input: { type: "object", properties: { publicacao_id: { type: "string", format: "uuid" }, todas: { type: "boolean" } }, additionalProperties: false },
+    run: async (ctx, a) => {
+      let fq = ctx.sb.from("posts").select("id").eq("workspace_id", ctx.ws).eq("status", "falhou").gte("updated_at", new Date(Date.now() - 7 * DAY).toISOString()).limit(20);
+      if (a.publicacao_id) fq = ctx.sb.from("posts").select("id").eq("workspace_id", ctx.ws).eq("status", "falhou").eq("id", needUuid(a.publicacao_id, "publicacao_id"));
+      else if (a.todas !== true) throw new ToolError(400, "Informe publicacao_id ou todas=true.");
+      const list = await q<Json[]>(fq);
+      if (!list.length) return { tentadas: 0, aviso: "Nenhuma publicação com falha encontrada." };
+      const resultados = [];
+      for (const p of list) resultados.push({ id: p.id, ...(await channel(() => publishPost(ctx.sb, ctx.env, p.id as string)).catch((e) => ({ ok: false, error: e instanceof Error ? e.message : String(e) }))) });
+      return { tentadas: resultados.length, publicadas: resultados.filter((r) => r.ok).length, resultados };
+    },
+  },
+  {
+    name: "listar_perfis", title: "Listar perfis (espaços de clientes)", write: false,
+    description: "Espaços de trabalho (um por cliente/marca) que esta conexão pode usar. Quando a conexão libera todos os espaços, passe perfil_id em qualquer ferramenta para agir naquele cliente.",
+    input: { type: "object", properties: {}, additionalProperties: false },
+    run: async (ctx) => {
+      const ids = ctx.multi && ctx.userId ? (await q<Json[]>(ctx.sb.from("workspace_members").select("workspace_id, role").eq("user_id", ctx.userId))) : [{ workspace_id: ctx.ws, role: null }];
+      const ws = await q<Json[]>(ctx.sb.from("workspaces").select("id, name").in("id", ids.map((i) => i.workspace_id as string)));
+      const counts = await q<Json[]>(ctx.sb.from("channel_accounts").select("workspace_id").in("workspace_id", ids.map((i) => i.workspace_id as string)));
+      return { atual: ctx.ws, todos_os_espacos: !!ctx.multi, perfis: ws.map((w) => ({ id: w.id, nome: w.name, papel: ids.find((i) => i.workspace_id === w.id)?.role ?? null, canais: counts.filter((c) => c.workspace_id === w.id).length, atual: w.id === ctx.ws })) };
+    },
+  },
+  {
+    name: "criar_disparo_whatsapp", title: "Disparar modelo do WhatsApp para uma lista", write: true,
+    description: "Envia um modelo aprovado para até 5.000 números (remove repetidos e inválidos). Variáveis aceitam {{nome}} e {{primeiro_nome}}. Mostre à pessoa o modelo, a quantidade e uma amostra e peça aprovação antes.",
+    input: { type: "object", properties: {
+      nome: { type: "string", maxLength: 120 }, modelo_id: { type: "string", format: "uuid" },
+      destinatarios: { type: "array", maxItems: 5000, items: { type: "object", properties: { telefone: { type: "string" }, nome: { type: "string" } }, required: ["telefone"] } },
+      variaveis: { type: "array", items: { type: "string" } }, numero_id: { type: "string", format: "uuid", description: "Número remetente (opcional)" },
+    }, required: ["modelo_id", "destinatarios"], additionalProperties: false },
+    run: async (ctx, a) => channel(() => createBroadcast({ sb: ctx.sb, env: ctx.env, ws: ctx.ws, userId: null }, { name: str(a.nome, 120), templateId: needUuid(a.modelo_id, "modelo_id"), accountId: a.numero_id ? needUuid(a.numero_id, "numero_id") : undefined, params: Array.isArray(a.variaveis) ? a.variaveis : [], recipients: (Array.isArray(a.destinatarios) ? a.destinatarios : []).map((r) => ({ phone: str((r as Json).telefone, 30), name: str((r as Json).nome, 120) })) })),
+  },
+  {
+    name: "listar_disparos", title: "Listar disparos do WhatsApp", write: false,
+    description: "Disparos com total, enviados, falhas e status.",
+    input: { type: "object", properties: { limite: { type: "integer", minimum: 1, maximum: 100, default: 20 } }, additionalProperties: false },
+    run: async (ctx, a) => ({ disparos: await q<Json[]>(ctx.sb.from("msg_campaigns").select("id, name, template_name, status, total, sent, failed, created_at, finished_at").eq("workspace_id", ctx.ws).order("created_at", { ascending: false }).limit(int(a.limite, 20, 1, 100))) }),
+  },
+  {
+    name: "listar_webhooks", title: "Listar webhooks", write: false,
+    description: "Endereços que recebem eventos do NinePro (lead criado, mensagem recebida, publicação publicada…).",
+    input: { type: "object", properties: {}, additionalProperties: false },
+    run: async (ctx) => ({ webhooks: await q<Json[]>(ctx.sb.from("webhooks").select("id, name, endpoint, events, active, created_at").eq("workspace_id", ctx.ws).order("created_at")), eventos_disponiveis: WEBHOOK_EVENTS.map((e) => e.id) }),
+  },
+  {
+    name: "criar_webhook", title: "Criar webhook", write: true,
+    description: "Cadastra um endereço https para receber eventos. Devolve o segredo de assinatura (cabeçalho X-NinePro-Signature, HMAC SHA-256) uma única vez.",
+    input: { type: "object", properties: { nome: { type: "string", maxLength: 120 }, endereco: { type: "string", description: "https://…" }, eventos: { type: "array", items: { type: "string" }, description: "Vazio = todos" } }, required: ["endereco"], additionalProperties: false },
+    run: async (ctx, a) => {
+      const endpoint = str(a.endereco, 500);
+      if (!/^https:\/\/[^\s/]+\.[^\s]+/.test(endpoint)) throw new ToolError(400, "O endereço precisa ser https.");
+      const valid = WEBHOOK_EVENTS.map((e) => e.id as string);
+      const events = (Array.isArray(a.eventos) ? a.eventos.map((e) => str(e, 60)) : []).filter((e) => valid.includes(e));
+      const row = await q<Json>(ctx.sb.from("webhooks").insert({ workspace_id: ctx.ws, name: str(a.nome, 120) || "Agente", endpoint, events: events.length ? events : valid }).select("id, name, endpoint, events, signing_secret").single());
+      return { webhook: { id: row.id, nome: row.name, endereco: row.endpoint, eventos: row.events }, segredo: row.signing_secret, aviso: "Guarde o segredo: ele não é mostrado de novo." };
+    },
+  },
+  {
+    name: "excluir_webhook", title: "Excluir webhook", write: true,
+    description: "Remove um webhook.",
+    input: { type: "object", properties: { webhook_id: { type: "string", format: "uuid" } }, required: ["webhook_id"], additionalProperties: false },
+    run: async (ctx, a) => {
+      const id = needUuid(a.webhook_id, "webhook_id");
+      const found = await q<Json[]>(ctx.sb.from("webhooks").delete().eq("workspace_id", ctx.ws).eq("id", id).select("id"));
+      if (!found.length) throw new ToolError(404, "Webhook não encontrado neste espaço.");
+      return { ok: true };
+    },
+  },
 ];
 
 /** Permissão (escopo OAuth) exigida por cada ferramenta de escrita; as de leitura exigem "leitura". */
@@ -543,17 +701,83 @@ const WRITE_SCOPE: Record<string, string> = {
   alterar_status_campanha: "anuncios", criar_publico: "anuncios", criar_regra: "anuncios", ativar_regra: "anuncios",
   criar_lead: "crm", atualizar_status_lead: "crm", registrar_conversao: "crm",
   responder_conversa: "mensagens", enviar_modelo_whatsapp: "mensagens", responder_comentario: "mensagens",
-  publicar_instagram: "publicacoes",
+  publicar_instagram: "publicacoes", gerar_link_de_envio: "publicacoes", editar_publicacao: "publicacoes", excluir_publicacao: "publicacoes", publicar_agora: "publicacoes", tentar_novamente: "publicacoes",
+  criar_disparo_whatsapp: "mensagens", criar_webhook: "automacoes", excluir_webhook: "automacoes",
   criar_automacao_comentario: "automacoes", alterar_automacao: "automacoes",
 };
 export const scopeOf = (t: Tool) => (t.write ? WRITE_SCOPE[t.name] ?? "escrita" : "leitura");
 export const allowed = (ctx: ToolCtx, t: Tool) => (ctx.scopes ? ctx.scopes.includes(scopeOf(t)) : ctx.canWrite || !t.write);
 
+
+/* ------------------------------------------------------------------ busca de ferramentas e documentação */
+const DOCS: { titulo: string; texto: string }[] = [
+  { titulo: "Conectar um agente", texto: "Cole https://ninepro.vercel.app/api/mcp no agente (Claude, ChatGPT, Grok, Cursor, Claude Code). Ele abre a tela de login do NinePro; escolha o espaço e as permissões. Sem OAuth, use uma chave de API em Authorization: Bearer np_live_…" },
+  { titulo: "Permissões", texto: "leitura (ler dados), publicacoes (publicar e agendar), mensagens (responder conversas, comentários e modelos do WhatsApp), automacoes (comentário → DM, respostas automáticas, webhooks), anuncios (pausar/ativar campanhas, públicos e regras), crm (leads e conversões), todos_espacos (agência: agir em todos os clientes com perfil_id)." },
+  { titulo: "Publicar com vídeo ou foto do computador", texto: "Chame gerar_link_de_envio, entregue o link para a pessoa soltar os arquivos, depois verificar_envio com o token e use 'midias' em publicar_instagram. Formatos: JPG, PNG, WebP, GIF, MP4, MOV, M4V, WebM. Reels: vídeo MP4 vertical 9:16, até 15 minutos." },
+  { titulo: "Publicar, agendar e rascunho", texto: "publicar_instagram publica agora, agenda (agendar_para em ISO 8601) ou salva rascunho (rascunho=true). Com mais de uma conta, informe contas; sem isso a ferramenta devolve a lista para escolher. Depois: listar_publicacoes, detalhar_publicacao, editar_publicacao, publicar_agora, excluir_publicacao, tentar_novamente." },
+  { titulo: "Comentário vira DM (palavra-chave)", texto: "criar_automacao_comentario: quem comentar a palavra recebe DM com botão de link (até 20 caracteres no rótulo, link https) e resposta pública opcional. Pode valer para uma publicação (publicacao_id ou midia_ids) e uma vez por pessoa. A DM privada só pode ser enviada até 7 dias após o comentário. listar_automacoes e alterar_automacao gerenciam." },
+  { titulo: "Análises", texto: "analisar_publicacoes: totais, médias, por formato, dia da semana e horário (Brasília), melhores e piores publicações do Instagram. resumo_desempenho, listar_campanhas e detalhar_campanha: anúncios (investimento, cliques, conversões, CPC, ROAS)." },
+  { titulo: "WhatsApp", texto: "Fora da janela de 24 horas só modelos aprovados podem ser enviados: listar_modelos_whatsapp, enviar_modelo_whatsapp (um número) e criar_disparo_whatsapp (lista de até 5.000). Dentro da janela, responder_conversa." },
+  { titulo: "Agência com vários clientes", texto: "Na tela de autorização marque 'todos os meus espaços'. listar_perfis mostra os clientes; passe perfil_id em qualquer ferramenta para agir naquele cliente. Em espaços onde você é membro, só leitura." },
+  { titulo: "Webhooks", texto: "criar_webhook recebe eventos (lead.criado, mensagem.recebida, comentario.recebido, publicacao.publicada, publicacao.falhou, regra.disparou, conversao.recebida…) num endereço https, assinados com X-NinePro-Signature: sha256=HMAC do corpo." },
+  { titulo: "Limites e erros", texto: "Erros voltam como texto em português com o motivo. Token OAuth vale 1 hora e renova sozinho (refresh de 90 dias). Toda chamada aparece em Logs no NinePro. Valores em reais (BRL), datas no fuso de Brasília." },
+];
+const words = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").split(/[^a-z0-9_]+/).filter((w) => w.length > 2);
+const score = (query: string, text: string) => { const t = words(text); return words(query).reduce((acc, w) => acc + t.filter((x) => x.startsWith(w) || w.startsWith(x)).length, 0); };
+
+TOOLS.push(
+  {
+    name: "search_tools", title: "Buscar ferramentas", write: false,
+    description: "Busca nas ferramentas do NinePro pelo que você quer fazer (ex.: 'enviar modelo do WhatsApp', 'pausar campanha', 'comentário vira DM') e devolve as melhores com o esquema dos argumentos. Depois use call_tool ou chame a ferramenta direto.",
+    input: { type: "object", properties: { consulta: { type: "string" }, query: { type: "string" }, limite: { type: "integer", minimum: 1, maximum: 20, default: 5 } }, additionalProperties: false },
+    run: async (ctx, a) => {
+      const query = str(a.consulta ?? a.query, 200);
+      if (!query) throw new ToolError(400, "Diga o que você quer fazer.");
+      const ranked = TOOLS.filter((t) => t.name !== "search_tools" && t.name !== "call_tool" && allowed(ctx, t)).map((t) => ({ t, s: score(query, `${t.name.replace(/_/g, " ")} ${t.title} ${t.description}`) })).filter((x) => x.s > 0).sort((x, y) => y.s - x.s).slice(0, int(a.limite, 5, 1, 20));
+      return { ferramentas: ranked.map(({ t }) => ({ nome: t.name, titulo: t.title, descricao: t.description, escrita: t.write, argumentos: t.input })) };
+    },
+  },
+  {
+    name: "call_tool", title: "Chamar ferramenta pelo nome", write: false,
+    description: "Executa qualquer ferramenta do NinePro pelo nome (achada com search_tools), com os argumentos dela. As permissões da conexão continuam valendo.",
+    input: { type: "object", properties: { nome: { type: "string" }, name: { type: "string" }, argumentos: { type: "object" }, arguments: { type: "object" } }, additionalProperties: false },
+    run: async (ctx, a) => {
+      const name = str(a.nome ?? a.name, 80);
+      if (name === "call_tool") throw new ToolError(400, "call_tool não chama a si mesma.");
+      return runTool(ctx, name, ((a.argumentos ?? a.arguments) as Json) ?? {});
+    },
+  },
+  {
+    name: "docs_search", title: "Buscar na documentação do NinePro", write: false,
+    description: "Responde dúvidas sobre como usar o NinePro pelo agente (conectar, permissões, enviar vídeo, publicar, comentário → DM, WhatsApp, agência, webhooks, limites). Devolve os 5 trechos mais relevantes.",
+    input: { type: "object", properties: { consulta: { type: "string" }, query: { type: "string" } }, additionalProperties: false },
+    run: async (_ctx, a) => {
+      const query = str(a.consulta ?? a.query, 200);
+      const docs = DOCS.map((d) => ({ d, s: score(query, `${d.titulo} ${d.texto}`) })).sort((x, y) => y.s - x.s).slice(0, 5);
+      return { trechos: docs.map(({ d }) => d) };
+    },
+  },
+);
+
 export const TOOL_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
+
+/** Escopos que valem num espaço: membro comum só lê. */
+const ROLE_SCOPES = (role: string, scopes: string[]) => (role === "owner" || role === "admin" ? scopes : scopes.filter((s) => s === "leitura" || s === "todos_espacos"));
 
 export async function runTool(ctx: ToolCtx, name: string, args: Json) {
   const tool = TOOL_BY_NAME.get(name);
-  if (!tool) throw new ToolError(404, `Ferramenta desconhecida: ${name}.`);
+  if (!tool) throw new ToolError(404, `Ferramenta desconhecida: ${name}. Use search_tools para achar a certa.`);
+  args = { ...(args ?? {}) };
+  const perfil = str(args.perfil_id, 64);
+  delete args.perfil_id;
+  if (perfil && perfil !== ctx.ws) {
+    if (!ctx.multi || !ctx.userId) throw new ToolError(403, "Esta conexão vale só para um espaço. Para agir em outros clientes, conecte de novo marcando “todos os meus espaços”.");
+    if (!isUuid(perfil)) throw new ToolError(400, "perfil_id inválido (use listar_perfis).");
+    const m = await q<Json | null>(ctx.sb.from("workspace_members").select("role").eq("workspace_id", perfil).eq("user_id", ctx.userId).maybeSingle());
+    if (!m) throw new ToolError(403, "Você não faz parte deste perfil.");
+    const scopes = ROLE_SCOPES(m.role as string, ctx.scopes ?? []);
+    ctx = { ...ctx, ws: perfil, scopes, canWrite: scopes.some((s) => s !== "leitura" && s !== "todos_espacos") };
+  }
   if (!allowed(ctx, tool)) throw new ToolError(403, ctx.scopes && tool.write ? `Sem permissão para esta ação (precisa de “${scopeOf(tool)}”). Conecte de novo liberando essa permissão.` : "Esta chave é somente leitura.");
   return tool.run(ctx, args ?? {});
 }

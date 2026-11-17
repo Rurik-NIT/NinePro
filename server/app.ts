@@ -63,7 +63,7 @@ export async function handleApp(req: Request, env: Env): Promise<Response> {
     const r = wsId ? await roleIn(wsId) : null;
     if (!r) return json(403, { error: "Você não faz parte deste espaço." });
     const scopes = parseScopes(body.scopes);
-    if (r === "member" && scopes.some((s) => s !== "leitura")) return json(403, { error: "Como membro, você só pode liberar a leitura. Peça a um administrador do espaço para liberar as demais permissões." });
+    if (r === "member" && scopes.some((s) => s !== "leitura" && s !== "todos_espacos")) return json(403, { error: "Como membro, você só pode liberar a leitura. Peça a um administrador do espaço para liberar as demais permissões." });
     try {
       const code = await approve(sb, me.id, { clientId: str(body.clientId, 80), redirectUri: str(body.redirectUri, 500), codeChallenge: str(body.codeChallenge, 200), method: str(body.codeChallengeMethod, 10) || "S256", scopes, workspaceId: wsId, resource: str(body.resource, 300) });
       return json(200, { code });

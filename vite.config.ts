@@ -18,6 +18,7 @@ const API_ROUTES: { prefix: string; module: string; fn: string }[] = [
   { prefix: "/api/regras", module: "/server/rules.ts", fn: "handleRules" },
   { prefix: "/api/mcp", module: "/server/agentApi.ts", fn: "handleMcp" },
   { prefix: "/api/oauth", module: "/server/oauth.ts", fn: "handleOauth" },
+  { prefix: "/api/midia", module: "/server/media.ts", fn: "handleMedia" },
   { prefix: "/.well-known/oauth-protected-resource", module: "/server/oauth.ts", fn: "handleOauth" },
   { prefix: "/.well-known/oauth-authorization-server", module: "/server/oauth.ts", fn: "handleOauth" },
   { prefix: "/.well-known/openid-configuration", module: "/server/oauth.ts", fn: "handleOauth" },
