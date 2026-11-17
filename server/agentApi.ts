@@ -61,6 +61,15 @@ export const ROUTES: Route[] = [
   { method: "PATCH", path: "/regras/{regra_id}", tool: "ativar_regra", summary: "Ligar ou desligar regra" },
   { method: "GET", path: "/conversoes", tool: "listar_conversoes", summary: "Listar eventos de conversão" },
   { method: "GET", path: "/contas", tool: "listar_contas_anuncio", summary: "Listar contas de anúncio" },
+  { method: "GET", path: "/canais", tool: "listar_canais", summary: "Listar números de WhatsApp e contas do Instagram" },
+  { method: "GET", path: "/conversas", tool: "listar_conversas", summary: "Listar conversas (WhatsApp e Instagram)" },
+  { method: "GET", path: "/conversas/{conversa_id}", tool: "ler_conversa", summary: "Ler mensagens de uma conversa" },
+  { method: "POST", path: "/conversas/{conversa_id}/mensagens", tool: "responder_conversa", summary: "Responder conversa" },
+  { method: "GET", path: "/whatsapp/modelos", tool: "listar_modelos_whatsapp", summary: "Listar modelos do WhatsApp" },
+  { method: "POST", path: "/whatsapp/mensagens", tool: "enviar_modelo_whatsapp", summary: "Enviar modelo do WhatsApp" },
+  { method: "GET", path: "/instagram/comentarios", tool: "listar_comentarios", summary: "Listar comentários e menções" },
+  { method: "POST", path: "/instagram/comentarios/{comentario_id}/respostas", tool: "responder_comentario", summary: "Responder comentário" },
+  { method: "POST", path: "/instagram/publicacoes", tool: "publicar_instagram", summary: "Publicar ou agendar no Instagram" },
 ];
 
 function matchRoute(method: string, path: string) {
@@ -194,7 +203,7 @@ async function mcpOne(msg: RpcReq, auth: KeyAuth) {
         protocolVersion: MCP_VERSIONS.includes(asked) ? asked : MCP_VERSIONS[0],
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: "ninepro", title: "NinePro", version: "1.0.0" },
-        instructions: "Ferramentas do NinePro para gestão de tráfego pago: leia desempenho, campanhas, leads e conversões, e aja em leads, campanhas, públicos e regras. Valores em reais (BRL). Tudo é restrito ao espaço de trabalho da chave." + (auth.ctx.canWrite ? "" : " Esta chave é somente leitura."),
+        instructions: "Ferramentas do NinePro para gestão de tráfego pago e atendimento: leia desempenho, campanhas, leads e conversões; aja em leads, campanhas, públicos e regras; leia e responda conversas do WhatsApp e do Instagram, envie modelos do WhatsApp, responda comentários e publique no Instagram. Valores em reais (BRL). Tudo é restrito ao espaço de trabalho da chave." + (auth.ctx.canWrite ? "" : " Esta chave é somente leitura."),
       });
     }
     case "ping": return rpcOk(msg.id, {});

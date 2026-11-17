@@ -51,12 +51,25 @@
     },
     "api/sync.ts": {
       "maxDuration": 300
+    },
+    "api/canais.ts": {
+      "maxDuration": 300
+    },
+    "api/canais-webhook.ts": {
+      "maxDuration": 60
+    },
+    "api/publicar.ts": {
+      "maxDuration": 300
     }
   },
   "crons": [
     {
       "path": "/api/sync",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/publicar",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

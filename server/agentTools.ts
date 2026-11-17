@@ -5,6 +5,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dispatchEvent } from "./webhooks.js";
 import { applyCampaignStatus } from "./connections.js";
+import { replyComment, savePost, sendTemplate, sendToConversation } from "./channels.js";
+import { PlatformError } from "./platforms/types.js";
 
 export interface ToolCtx { sb: SupabaseClient; ws: string; canWrite: boolean; env: Record<string, string | undefined> }
 type Json = Record<string, unknown>;
@@ -12,6 +14,9 @@ type Schema = { type: "object"; properties: Record<string, Json>; required?: str
 export interface Tool { name: string; title: string; description: string; write: boolean; input: Schema; run: (ctx: ToolCtx, args: Json) => Promise<unknown> }
 
 export class ToolError extends Error { constructor(public status: number, message: string) { super(message); } }
+
+/** Converte erros de plataforma (WhatsApp/Instagram) em erro 400 legível para o agente. */
+const channel = async <T>(fn: () => Promise<T>) => { try { return await fn(); } catch (e) { if (e instanceof PlatformError) throw new ToolError(400, e.message); throw e; } };
 
 const PLATFORMS = ["meta", "google", "tiktok", "linkedin", "pinterest", "x", "reddit", "microsoft", "snapchat", "openai"];
 const LEAD_STATUS = ["novo", "contatado", "qualificado", "venda", "descartado"];
@@ -282,6 +287,94 @@ export const TOOLS: Tool[] = [
     description: "Contas de anúncio conectadas ao espaço, com plataforma, moeda e última sincronização.",
     input: { type: "object", properties: {}, additionalProperties: false },
     run: async (ctx) => ({ contas: await q<Json[]>(ctx.sb.from("ad_accounts").select("id, name, platform, currency, timezone, status, last_synced_at").eq("workspace_id", ctx.ws).order("name")) }),
+  },
+  {
+    name: "listar_canais", title: "Listar canais de mensagem", write: false,
+    description: "Números de WhatsApp e contas do Instagram conectados ao espaço.",
+    input: { type: "object", properties: {}, additionalProperties: false },
+    run: async (ctx) => ({ canais: await q<Json[]>(ctx.sb.from("channel_accounts").select("id, kind, name, display_name, status, quality, connection_id").eq("workspace_id", ctx.ws).order("kind")) }),
+  },
+  {
+    name: "listar_conversas", title: "Listar conversas", write: false,
+    description: "Conversas do WhatsApp e do Instagram (mais recentes primeiro). 'pode_responder' indica se a janela de 24 horas está aberta.",
+    input: { type: "object", properties: {
+      canal: { type: "string", enum: ["WhatsApp", "Instagram"] }, status: { type: "string", enum: ["Aberta", "Resolvida"] },
+      nao_lidas: { type: "boolean" }, busca: { type: "string" }, limite: { type: "integer", minimum: 1, maximum: 200, default: 50 },
+    }, additionalProperties: false },
+    run: async (ctx, a) => {
+      let cq = ctx.sb.from("conversations").select("id, channel, contact_name, contact_handle, status, unread, last_message_preview, last_message_at, last_inbound_at").eq("workspace_id", ctx.ws).not("channel_account_id", "is", null).order("last_message_at", { ascending: false }).limit(int(a.limite, 50, 1, 200));
+      const canal = oneOf(a.canal, ["WhatsApp", "Instagram"], "canal", true); if (canal) cq = cq.eq("channel", canal);
+      const status = oneOf(a.status, ["Aberta", "Resolvida"], "status", true); if (status) cq = cq.eq("status", status);
+      if (a.nao_lidas === true) cq = cq.gt("unread", 0);
+      const busca = str(a.busca, 80).replace(/[%,()]/g, ""); if (busca) cq = cq.or(`contact_name.ilike.%${busca}%,contact_handle.ilike.%${busca}%,last_message_preview.ilike.%${busca}%`);
+      const rows = await q<Json[]>(cq);
+      return { conversas: rows.map((r) => ({ id: r.id, canal: r.channel, contato: r.contact_name, identificador: r.contact_handle, status: r.status, nao_lidas: r.unread, ultima_mensagem: r.last_message_preview, ultima_em: r.last_message_at, pode_responder: !!r.last_inbound_at && Date.now() - Date.parse(r.last_inbound_at as string) < DAY })) };
+    },
+  },
+  {
+    name: "ler_conversa", title: "Ler conversa", write: false,
+    description: "Mensagens de uma conversa, em ordem cronológica.",
+    input: { type: "object", properties: { conversa_id: { type: "string", format: "uuid" }, limite: { type: "integer", minimum: 1, maximum: 500, default: 100 } }, required: ["conversa_id"], additionalProperties: false },
+    run: async (ctx, a) => {
+      const id = needUuid(a.conversa_id, "conversa_id");
+      const conv = await q<Json | null>(ctx.sb.from("conversations").select("id, channel, contact_name, contact_handle, status, last_inbound_at").eq("workspace_id", ctx.ws).eq("id", id).maybeSingle());
+      if (!conv) throw new ToolError(404, "Conversa não encontrada neste espaço.");
+      const msgs = await q<Json[]>(ctx.sb.from("messages").select("direction, body, kind, status, error, sent_at").eq("workspace_id", ctx.ws).eq("conversation_id", id).order("sent_at", { ascending: false }).limit(int(a.limite, 100, 1, 500)));
+      return { conversa: conv, pode_responder: !!conv.last_inbound_at && Date.now() - Date.parse(conv.last_inbound_at as string) < DAY, mensagens: msgs.reverse().map((m) => ({ de: m.direction === "in" ? "cliente" : "equipe", texto: m.body, tipo: m.kind, status: m.status, erro: m.error, em: m.sent_at })) };
+    },
+  },
+  {
+    name: "responder_conversa", title: "Responder conversa", write: true,
+    description: "Envia uma mensagem numa conversa do WhatsApp ou do Instagram. Só funciona até 24 horas depois da última mensagem do cliente; fora disso, no WhatsApp use enviar_modelo_whatsapp.",
+    input: { type: "object", properties: { conversa_id: { type: "string", format: "uuid" }, texto: { type: "string", minLength: 1, maxLength: 4096 }, imagem_url: { type: "string", description: "URL pública https de uma imagem (opcional)" } }, required: ["conversa_id", "texto"], additionalProperties: false },
+    run: async (ctx, a) => channel(() => sendToConversation({ sb: ctx.sb, env: ctx.env, ws: ctx.ws, userId: null }, needUuid(a.conversa_id, "conversa_id"), str(a.texto, 4096), str(a.imagem_url, 1000).startsWith("https://") ? { url: str(a.imagem_url, 1000), type: "image" } : undefined)),
+  },
+  {
+    name: "listar_modelos_whatsapp", title: "Listar modelos do WhatsApp", write: false,
+    description: "Modelos de mensagem do WhatsApp com status de aprovação, idioma e texto (variáveis {{1}}, {{2}}…).",
+    input: { type: "object", properties: { somente_aprovados: { type: "boolean", default: true } }, additionalProperties: false },
+    run: async (ctx, a) => {
+      let tq = ctx.sb.from("wa_templates").select("id, name, language, category, status, components").eq("workspace_id", ctx.ws).order("name");
+      if (a.somente_aprovados !== false) tq = tq.eq("status", "APPROVED");
+      const rows = await q<Json[]>(tq);
+      return { modelos: rows.map((t) => ({ id: t.id, nome: t.name, idioma: t.language, categoria: t.category, status: t.status, texto: ((t.components as Json[]) ?? []).find((c) => c.type === "BODY")?.text ?? null })) };
+    },
+  },
+  {
+    name: "enviar_modelo_whatsapp", title: "Enviar modelo do WhatsApp", write: true,
+    description: "Envia um modelo aprovado para um número (inicia conversa ou fala depois das 24 horas). Variáveis na ordem de {{1}}, {{2}}…",
+    input: { type: "object", properties: {
+      modelo_id: { type: "string", format: "uuid" }, para: { type: "string", description: "Número com DDI e DDD, ex.: +5511912345678" },
+      variaveis: { type: "array", items: { type: "string" } }, nome_contato: { type: "string" }, numero_id: { type: "string", format: "uuid", description: "Número remetente (opcional)" },
+    }, required: ["modelo_id", "para"], additionalProperties: false },
+    run: async (ctx, a) => channel(() => sendTemplate({ sb: ctx.sb, env: ctx.env, ws: ctx.ws, userId: null }, { templateId: needUuid(a.modelo_id, "modelo_id"), to: str(a.para, 30), bodyParams: Array.isArray(a.variaveis) ? a.variaveis.map((v) => str(v, 1000)) : [], contactName: str(a.nome_contato, 120), accountId: a.numero_id ? needUuid(a.numero_id, "numero_id") : undefined })),
+  },
+  {
+    name: "listar_comentarios", title: "Listar comentários do Instagram", write: false,
+    description: "Comentários e menções recebidos no Instagram.",
+    input: { type: "object", properties: { sem_resposta: { type: "boolean" }, tipo: { type: "string", enum: ["comment", "mention"] }, limite: { type: "integer", minimum: 1, maximum: 200, default: 50 } }, additionalProperties: false },
+    run: async (ctx, a) => {
+      let cq = ctx.sb.from("social_comments").select("id, kind, author_username, body, replied, reply_text, hidden, media_permalink, commented_at").eq("workspace_id", ctx.ws).eq("from_owner", false).order("commented_at", { ascending: false }).limit(int(a.limite, 50, 1, 200));
+      if (a.sem_resposta === true) cq = cq.eq("replied", false);
+      const tipo = oneOf(a.tipo, ["comment", "mention"], "tipo", true); if (tipo) cq = cq.eq("kind", tipo);
+      return { comentarios: await q<Json[]>(cq) };
+    },
+  },
+  {
+    name: "responder_comentario", title: "Responder comentário do Instagram", write: true,
+    description: "Responde um comentário publicamente ou por mensagem direta (privada=true, até 7 dias após o comentário).",
+    input: { type: "object", properties: { comentario_id: { type: "string", format: "uuid" }, texto: { type: "string", minLength: 1, maxLength: 2200 }, privada: { type: "boolean", default: false } }, required: ["comentario_id", "texto"], additionalProperties: false },
+    run: async (ctx, a) => channel(() => replyComment({ sb: ctx.sb, env: ctx.env, ws: ctx.ws, userId: null }, needUuid(a.comentario_id, "comentario_id"), str(a.texto, 2200), a.privada === true)),
+  },
+  {
+    name: "publicar_instagram", title: "Publicar ou agendar no Instagram", write: true,
+    description: "Publica agora ou agenda uma publicação no Instagram. As mídias precisam ser URLs públicas https (JPEG para imagem, MP4 para vídeo).",
+    input: { type: "object", properties: {
+      legenda: { type: "string", maxLength: 2200 }, contas: { type: "array", items: { type: "string", format: "uuid" }, description: "IDs das contas (listar_canais)" },
+      midias: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 10 }, tipo: { type: "string", enum: ["IMAGE", "REELS", "CAROUSEL", "STORIES"] },
+      agendar_para: { type: "string", format: "date-time", description: "Vazio = publicar agora" },
+    }, required: ["contas", "midias"], additionalProperties: false },
+    run: async (ctx, a) => channel(() => savePost({ sb: ctx.sb, env: ctx.env, ws: ctx.ws, userId: null }, { content: str(a.legenda, 2200), accountIds: a.contas, mediaUrls: a.midias, mediaType: a.tipo, scheduledAt: a.agendar_para, mode: a.agendar_para ? "agendar" : "agora" })),
   },
 ];
 

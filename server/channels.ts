@@ -1,0 +1,619 @@
+/**
+ * Canais: WhatsApp Business (Cloud API) e Instagram (mensagens diretas, comentários, menções e publicação).
+ *  - POST /api/canais          (sessão do usuário): enviar mensagens e modelos, responder comentários, publicar
+ *  - GET/POST /api/canais-webhook  (Meta): verificação e eventos recebidos. ?conta=<chave> quando o cliente usa o próprio app
+ *  - GET /api/publicar         (Vercel Cron): publica o que estiver agendado
+ * A conexão (OAuth / token) é a mesma das plataformas de anúncio (/api/connect, plataformas "whatsapp" e "instagram").
+ */
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { loadAuth, loadOwnApp, serviceClient } from "./connections.js";
+import { encryptToken } from "./crypto.js";
+import { CHANNELS, isChannel, PlatformError, type ChannelId, type StoredAuth } from "./platforms/index.js";
+import * as IG from "./platforms/instagram.js";
+import * as WA from "./platforms/whatsapp.js";
+import type { WebhookEvent } from "./events.js";
+import { dispatchEvent } from "./webhooks.js";
+
+type Env = Record<string, string | undefined>;
+type Json = Record<string, unknown>;
+const FRIENDLY = "Não foi possível concluir agora. Tente de novo em alguns minutos.";
+const json = (status: number, data: unknown) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+const now = () => new Date().toISOString();
+const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const LABEL: Record<ChannelId, string> = { whatsapp: "WhatsApp", instagram: "Instagram" };
+const DAY = 86_400_000;
+
+interface Account { id: string; workspace_id: string; connection_id: string | null; kind: ChannelId; external_id: string; parent_external_id: string | null; name: string }
+const ACCOUNT_COLS = "id, workspace_id, connection_id, kind, external_id, parent_external_id, name";
+
+/* ------------------------------------------------------------------ autenticação do canal */
+async function persistAuth(sb: SupabaseClient, env: Env, connectionId: string, auth: StoredAuth) {
+  await sb.from("platform_tokens").update({ access_token_enc: await encryptToken(env, JSON.stringify(auth)), updated_at: now() }).eq("connection_id", connectionId);
+}
+/** Credenciais prontas (renova o token do Instagram quando preciso e guarda o novo). */
+async function channelAuth(sb: SupabaseClient, env: Env, kind: ChannelId, connectionId: string | null): Promise<StoredAuth> {
+  if (!connectionId) throw new PlatformError(`${LABEL[kind]} desconectado. Conecte de novo em Conexões.`, true);
+  const stored = await loadAuth(sb, env, connectionId);
+  const auth = await CHANNELS[kind].ready(env, stored);
+  if (auth.accessToken !== stored.accessToken || auth.extra?.refreshedAt !== stored.extra?.refreshedAt) await persistAuth(sb, env, connectionId, auth);
+  return auth;
+}
+const tokenOf = (a: StoredAuth) => { if (!a.accessToken) throw new PlatformError("Conexão sem token. Conecte de novo.", true); return a.accessToken; };
+
+/* ------------------------------------------------------------------ conversas e mensagens */
+interface ConvInput { contactName?: string | null; handle?: string | null; picture?: string | null; at: string; preview: string; inbound: boolean }
+async function ensureConversation(sb: SupabaseClient, acc: Account, thread: string, c: ConvInput) {
+  const { data: existing } = await sb.from("conversations").select("id, unread, contact_name, last_message_at").eq("channel_account_id", acc.id).eq("external_thread_id", thread).maybeSingle();
+  if (existing) {
+    const newer = Date.parse(c.at) >= Date.parse(existing.last_message_at as string);
+    const patch: Json = {};
+    if (newer) Object.assign(patch, { last_message_at: c.at, last_message_preview: c.preview.slice(0, 280) });
+    if (c.inbound) Object.assign(patch, { unread: (existing.unread as number) + 1, status: "Aberta", last_inbound_at: c.at });
+    if (c.contactName && (existing.contact_name as string).startsWith("+") && !c.contactName.startsWith("+")) patch.contact_name = c.contactName;
+    if (c.picture) patch.contact_picture = c.picture;
+    if (Object.keys(patch).length) await sb.from("conversations").update(patch).eq("id", existing.id);
+    return existing.id as string;
+  }
+  const { data, error } = await sb.from("conversations").upsert({
+    workspace_id: acc.workspace_id, channel: LABEL[acc.kind], channel_account_id: acc.id, external_thread_id: thread,
+    contact_name: c.contactName || c.handle || thread, contact_handle: c.handle ?? null, contact_picture: c.picture ?? null,
+    status: "Aberta", unread: c.inbound ? 1 : 0, last_message_at: c.at, last_message_preview: c.preview.slice(0, 280), last_inbound_at: c.inbound ? c.at : null,
+  }, { onConflict: "channel_account_id,external_thread_id" }).select("id").single();
+  if (error || !data) throw new Error(error?.message ?? "Não foi possível criar a conversa.");
+  return data.id as string;
+}
+
+interface MsgInput { externalId: string | null; direction: "in" | "out"; body: string; kind?: string; mediaId?: string | null; mediaUrl?: string | null; status?: string | null; at: string; authorId?: string | null; error?: string | null }
+/** Grava a mensagem; devolve false quando ela já existia (reentrega do webhook). */
+async function saveMessage(sb: SupabaseClient, ws: string, conversationId: string, m: MsgInput) {
+  const row = { workspace_id: ws, conversation_id: conversationId, direction: m.direction, body: m.body, kind: m.kind ?? "text", media_id: m.mediaId ?? null, media_url: m.mediaUrl ?? null, status: m.status ?? null, error: m.error ?? null, author_id: m.authorId ?? null, sent_at: m.at, external_id: m.externalId };
+  if (!m.externalId) { const { data } = await sb.from("messages").insert(row).select("id").single(); return data ? (data.id as number) : null; }
+  const { data } = await sb.from("messages").upsert(row, { onConflict: "workspace_id,external_id", ignoreDuplicates: true }).select("id");
+  return data?.[0] ? (data[0].id as number) : null;
+}
+
+/* ------------------------------------------------------------------ sincronização (ao conectar e no botão) */
+export async function syncChannel(sb: SupabaseClient, env: Env, conn: { id: string; workspace_id: string; platform: ChannelId }, trigger: "manual" | "agendada" | "conexao") {
+  const kind = conn.platform;
+  const prov = CHANNELS[kind];
+  const ws = conn.workspace_id;
+  const { data: run } = await sb.from("sync_runs").insert({ workspace_id: ws, platform: kind, trigger }).select("id").single();
+  const detail: Json = { contas: 0 };
+  const warnings: string[] = [];
+  try {
+    const auth = await channelAuth(sb, env, kind, conn.id);
+    const found = await prov.discover(env, auth);
+    const accounts: Account[] = [];
+    for (const a of found) {
+      const { data: other } = await sb.from("channel_accounts").select("id, workspace_id, connection_id").eq("kind", kind).eq("external_id", a.externalId).maybeSingle();
+      if (other && other.workspace_id !== ws) {
+        if (other.connection_id) { warnings.push(`${a.name} já está conectado em outro espaço do NinePro.`); continue; }
+        await sb.from("channel_accounts").delete().eq("id", other.id); // estava desconectado: passa para este espaço
+      }
+      const { data: row, error } = await sb.from("channel_accounts").upsert({
+        workspace_id: ws, connection_id: conn.id, kind, external_id: a.externalId, parent_external_id: a.parentExternalId ?? null, name: a.name, display_name: a.displayName ?? null,
+        picture_url: a.picture ?? null, status: a.status, quality: a.quality ?? null, detail: a.detail ?? {}, updated_at: now(),
+      }, { onConflict: "kind,external_id" }).select(ACCOUNT_COLS).single();
+      if (error || !row) { warnings.push(`${a.name}: ${error?.message ?? "não salvo"}`); continue; }
+      accounts.push(row as Account);
+    }
+    detail.contas = accounts.length;
+    if (!found.length) warnings.push(kind === "whatsapp" ? "Nenhum número encontrado na conta do WhatsApp Business." : "Nenhuma conta do Instagram encontrada.");
+    const sub = await prov.subscribe(env, auth, found);
+    if (sub) warnings.push(`Webhooks: ${sub}`);
+
+    if (kind === "whatsapp") {
+      let total = 0;
+      for (const waba of new Set(accounts.map((a) => a.parent_external_id).filter(Boolean) as string[])) {
+        try {
+          const list = await WA.waListTemplates(env, tokenOf(auth), waba);
+          if (list.length) {
+            const { error } = await sb.from("wa_templates").upsert(list.map((t) => ({ workspace_id: ws, connection_id: conn.id, waba_id: waba, external_id: t.id, name: t.name, language: t.language, category: t.category ?? null, status: t.status ?? null, rejected_reason: t.rejected_reason && t.rejected_reason !== "NONE" ? t.rejected_reason : null, components: t.components ?? [], updated_at: now() })), { onConflict: "waba_id,external_id" });
+            if (error) throw new Error(error.message);
+          }
+          const keep = list.map((t) => t.id);
+          let del = sb.from("wa_templates").delete().eq("workspace_id", ws).eq("waba_id", waba);
+          if (keep.length) del = del.not("external_id", "in", `(${keep.join(",")})`);
+          await del;
+          total += list.length;
+        } catch (e) { warnings.push(`Modelos: ${msg(e)}`); }
+      }
+      detail.modelos = total;
+    } else {
+      for (const acc of accounts) {
+        const t = tokenOf(auth);
+        try { detail.comentarios = await backfillComments(sb, env, t, acc); } catch (e) { warnings.push(`Comentários: ${msg(e)}`); }
+        try { detail.conversas = await backfillDirect(sb, env, t, acc); } catch (e) { warnings.push(`Mensagens diretas: ${msg(e)}`); }
+      }
+    }
+    if (warnings.length) detail.avisos = warnings.slice(0, 10);
+    await sb.from("platform_connections").update({ status: "ativa", last_error: warnings[0] ?? null, last_synced_at: now(), updated_at: now() }).eq("id", conn.id);
+    if (run) await sb.from("sync_runs").update({ status: accounts.length ? "ok" : "erro", detail, error: warnings[0] ?? null, finished_at: now() }).eq("id", run.id);
+    return { ok: true, detail };
+  } catch (e) {
+    const expired = e instanceof PlatformError && e.expired;
+    await sb.from("platform_connections").update({ status: expired ? "expirada" : "erro", last_error: msg(e).slice(0, 500), updated_at: now() }).eq("id", conn.id);
+    if (run) await sb.from("sync_runs").update({ status: "erro", detail, error: msg(e).slice(0, 500), finished_at: now() }).eq("id", run.id);
+    return { ok: false, error: msg(e), detail };
+  }
+}
+
+async function backfillComments(sb: SupabaseClient, env: Env, token: string, acc: Account) {
+  const media = await IG.igRecentMedia(env, token, 10);
+  let n = 0;
+  for (const m of media) {
+    if (!m.comments_count) continue;
+    const comments = await IG.igComments(env, token, m.id).catch(() => []);
+    const rows: Json[] = [];
+    for (const c of comments) {
+      const replies = c.replies?.data ?? [];
+      const ownerReply = replies.find((r) => r.from?.id === acc.external_id || r.username === acc.name.replace(/^@/, ""));
+      rows.push(commentRow(acc, { id: c.id, text: c.text, username: c.username ?? c.from?.username, fromId: c.from?.id, at: c.timestamp, mediaId: m.id, caption: m.caption, permalink: m.permalink, thumb: m.thumbnail_url ?? m.media_url, replied: !!ownerReply, replyText: ownerReply?.text }));
+      for (const r of replies) rows.push(commentRow(acc, { id: r.id, parent: c.id, text: r.text, username: r.username ?? r.from?.username, fromId: r.from?.id, at: r.timestamp, mediaId: m.id, caption: m.caption, permalink: m.permalink, thumb: m.thumbnail_url ?? m.media_url }));
+    }
+    if (rows.length) { await sb.from("social_comments").upsert(rows, { onConflict: "channel_account_id,external_id" }); n += rows.length; }
+  }
+  return n;
+}
+function commentRow(acc: Account, c: { id: string; parent?: string | null; text?: string; username?: string; fromId?: string; at?: string; mediaId?: string; caption?: string; permalink?: string; thumb?: string; replied?: boolean; replyText?: string; kind?: "comment" | "mention" }) {
+  const owner = c.fromId === acc.external_id || (!!c.username && c.username === acc.name.replace(/^@/, ""));
+  return {
+    workspace_id: acc.workspace_id, channel_account_id: acc.id, kind: c.kind ?? "comment", external_id: c.id, parent_external_id: c.parent ?? null, media_id: c.mediaId ?? null,
+    media_caption: c.caption ?? null, media_permalink: c.permalink ?? null, media_thumbnail: c.thumb ?? null, author_id: c.fromId ?? null, author_username: c.username ?? null,
+    body: c.text ?? "", commented_at: c.at ?? now(), from_owner: owner, ...(c.replied !== undefined ? { replied: c.replied || owner, reply_text: c.replyText ?? null } : { replied: owner }),
+  };
+}
+
+async function backfillDirect(sb: SupabaseClient, env: Env, token: string, acc: Account) {
+  const threads = await IG.igConversations(env, token, 25);
+  let n = 0;
+  for (const th of threads) {
+    const other = th.participants?.data.find((p) => p.id !== acc.external_id && p.username !== acc.name.replace(/^@/, ""));
+    const msgs = [...(th.messages?.data ?? [])].reverse();
+    if (!other || !msgs.length) continue;
+    const last = msgs[msgs.length - 1];
+    const lastIn = [...msgs].reverse().find((m) => m.from?.id === other.id);
+    const { data: exists } = await sb.from("conversations").select("id").eq("channel_account_id", acc.id).eq("external_thread_id", other.id).maybeSingle();
+    let convId = exists?.id as string | undefined;
+    if (!convId) {
+      const prof = await IG.igProfile(env, token, other.id);
+      convId = await ensureConversation(sb, acc, other.id, { contactName: prof.name || (other.username ? `@${other.username}` : null), handle: other.username ? `@${other.username}` : null, picture: prof.profile_pic ?? null, at: last.created_time, preview: last.message || "[Anexo]", inbound: false });
+      if (lastIn) await sb.from("conversations").update({ last_inbound_at: lastIn.created_time }).eq("id", convId);
+      n++;
+    }
+    for (const m of msgs) {
+      const att = m.attachments?.data?.[0];
+      await saveMessage(sb, acc.workspace_id, convId, { externalId: m.id, direction: m.from?.id === other.id ? "in" : "out", body: m.message || (att ? "[Anexo]" : ""), kind: att ? (att.video_data ? "video" : "image") : "text", mediaUrl: att?.image_data?.url ?? att?.video_data?.url ?? null, status: m.from?.id === other.id ? "recebida" : "enviada", at: m.created_time });
+    }
+  }
+  return n;
+}
+
+/* ------------------------------------------------------------------ webhooks recebidos da Meta */
+async function hmacHex(secret: string, body: string) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return [...new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+function safeEqual(a: string, b: string) {
+  if (a.length !== b.length) return false;
+  let r = 0;
+  for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return r === 0;
+}
+async function signatureOk(secrets: string[], body: string, header: string | null) {
+  const got = (header ?? "").replace(/^sha256=/, "");
+  if (!got) return false;
+  for (const s of secrets) if (safeEqual(await hmacHex(s, body), got)) return true;
+  return false;
+}
+
+const waBody = (m: Json): { body: string; kind: string; mediaId: string | null } => {
+  const t = m.type as string;
+  const part = (m[t] ?? {}) as Json;
+  switch (t) {
+    case "text": return { body: String((part.body as string) ?? ""), kind: "text", mediaId: null };
+    case "image": case "video": case "audio": case "document": case "sticker": {
+      const label = { image: "[Foto]", video: "[Vídeo]", audio: "[Áudio]", document: `[Documento${part.filename ? `: ${part.filename}` : ""}]`, sticker: "[Figurinha]" }[t];
+      return { body: (part.caption as string) || label, kind: t, mediaId: (part.id as string) ?? null };
+    }
+    case "location": return { body: `[Localização] ${part.name ?? ""} ${part.latitude},${part.longitude}`.trim(), kind: "location", mediaId: null };
+    case "button": return { body: String(part.text ?? "[Botão]"), kind: "button", mediaId: null };
+    case "interactive": { const r = (part.button_reply ?? part.list_reply ?? {}) as Json; return { body: String(r.title ?? "[Resposta interativa]"), kind: "interactive", mediaId: null }; }
+    case "reaction": return { body: `Reagiu ${part.emoji ?? ""}`.trim(), kind: "reaction", mediaId: null };
+    case "contacts": return { body: "[Contato compartilhado]", kind: "contacts", mediaId: null };
+    default: return { body: `[${t ?? "mensagem"}]`, kind: t ?? "unknown", mediaId: null };
+  }
+};
+const WA_STATUS: Record<string, string> = { sent: "enviada", delivered: "entregue", read: "lida", failed: "falhou" };
+
+async function accountFor(sb: SupabaseClient, kind: ChannelId, externalId: string, connectionId?: string): Promise<Account | null> {
+  let q = sb.from("channel_accounts").select(ACCOUNT_COLS).eq("kind", kind).eq("external_id", externalId);
+  if (connectionId) q = q.eq("connection_id", connectionId);
+  const { data } = await q.maybeSingle();
+  return (data as Account | null) ?? null;
+}
+
+async function handleWhatsAppChange(sb: SupabaseClient, env: Env, change: Json, connectionId?: string) {
+  const field = change.field as string;
+  const v = (change.value ?? {}) as Json;
+  if (field === "message_template_status_update") {
+    await sb.from("wa_templates").update({ status: v.event as string, rejected_reason: v.reason && v.reason !== "NONE" ? (v.reason as string) : null, updated_at: now() }).eq("external_id", String(v.message_template_id ?? ""));
+    return;
+  }
+  if (field !== "messages") return;
+  const phoneId = String((v.metadata as Json | undefined)?.phone_number_id ?? "");
+  const acc = phoneId ? await accountFor(sb, "whatsapp", phoneId, connectionId) : null;
+  if (!acc) return;
+  const contacts = (v.contacts ?? []) as { wa_id: string; profile?: { name?: string } }[];
+  for (const m of (v.messages ?? []) as Json[]) {
+    const from = String(m.from);
+    const at = new Date(Number(m.timestamp) * 1000).toISOString();
+    const { body, kind, mediaId } = waBody(m);
+    const name = contacts.find((c) => c.wa_id === from)?.profile?.name ?? null;
+    const convId = await ensureConversation(sb, acc, from, { contactName: name ?? `+${from}`, handle: `+${from}`, at, preview: body, inbound: true });
+    const id = await saveMessage(sb, acc.workspace_id, convId, { externalId: String(m.id), direction: "in", body, kind, mediaId, status: "recebida", at });
+    if (id === null) continue; // reentrega
+    if (mediaId) {
+      try {
+        const auth = await channelAuth(sb, env, "whatsapp", acc.connection_id);
+        const file = await WA.waDownloadMedia(env, tokenOf(auth), mediaId);
+        if (file && file.bytes.byteLength <= 20 * 1024 * 1024) {
+          const path = `${acc.workspace_id}/${convId}/${String(m.id).replace(/[^\w.-]/g, "_")}`;
+          const up = await sb.storage.from("anexos").upload(path, file.bytes, { contentType: file.mime, upsert: true });
+          if (!up.error) await sb.from("messages").update({ media_url: path }).eq("id", id);
+        }
+      } catch (e) { console.error("mídia do WhatsApp:", msg(e)); }
+    }
+    await dispatchEvent(sb, acc.workspace_id, "mensagem.recebida", { canal: "whatsapp", conversa_id: convId, de: `+${from}`, nome: name, texto: body, tipo: kind, numero: acc.name, recebida_em: at });
+  }
+  for (const s of (v.statuses ?? []) as Json[]) {
+    const errors = (s.errors ?? []) as { title?: string; message?: string; error_data?: { details?: string } }[];
+    const err = errors[0] ? (errors[0].error_data?.details || errors[0].message || errors[0].title || "Falhou") : null;
+    await sb.from("messages").update({ status: WA_STATUS[s.status as string] ?? (s.status as string), ...(err ? { error: err } : {}) }).eq("workspace_id", acc.workspace_id).eq("external_id", String(s.id));
+  }
+}
+
+async function handleInstagramEntry(sb: SupabaseClient, env: Env, entry: Json, connectionId?: string) {
+  const igId = String(entry.id ?? "");
+  const acc = igId ? await accountFor(sb, "instagram", igId, connectionId) : null;
+  if (!acc) return;
+  let token: string | null = null;
+  const tok = async () => (token ??= tokenOf(await channelAuth(sb, env, "instagram", acc.connection_id)));
+
+  for (const ev of (entry.messaging ?? []) as Json[]) {
+    const m = ev.message as Json | undefined;
+    if (!m || m.is_deleted) continue;
+    const echo = m.is_echo === true;
+    const sender = String((ev.sender as Json)?.id ?? "");
+    const recipient = String((ev.recipient as Json)?.id ?? "");
+    const thread = echo ? recipient : sender;
+    if (!thread || thread === acc.external_id) continue;
+    const at = new Date(Number(ev.timestamp ?? Date.now())).toISOString();
+    const att = ((m.attachments ?? []) as { type?: string; payload?: { url?: string } }[])[0];
+    const body = String(m.text ?? "") || (att ? { image: "[Foto]", video: "[Vídeo]", audio: "[Áudio]", share: "[Compartilhamento]", story_mention: "[Mencionou você no story]", ig_reel: "[Reel]" }[att.type ?? ""] ?? "[Anexo]" : "");
+    const { data: exists } = await sb.from("conversations").select("id").eq("channel_account_id", acc.id).eq("external_thread_id", thread).maybeSingle();
+    let prof: { name?: string; username?: string; profile_pic?: string } = {};
+    if (!exists) prof = await IG.igProfile(env, await tok().catch(() => ""), thread);
+    const convId = await ensureConversation(sb, acc, thread, { contactName: prof.name || (prof.username ? `@${prof.username}` : null), handle: prof.username ? `@${prof.username}` : null, picture: prof.profile_pic ?? null, at, preview: body, inbound: !echo });
+    const id = await saveMessage(sb, acc.workspace_id, convId, { externalId: String(m.mid ?? ""), direction: echo ? "out" : "in", body, kind: att?.type ?? "text", mediaUrl: att?.payload?.url ?? null, status: echo ? "enviada" : "recebida", at });
+    if (id !== null && !echo) await dispatchEvent(sb, acc.workspace_id, "mensagem.recebida", { canal: "instagram", conversa_id: convId, de: prof.username ? `@${prof.username}` : thread, nome: prof.name ?? null, texto: body, conta: acc.name, recebida_em: at });
+  }
+
+  for (const ch of (entry.changes ?? []) as Json[]) {
+    const v = (ch.value ?? {}) as Json;
+    if (ch.field === "comments" || ch.field === "live_comments") {
+      const from = (v.from ?? {}) as { id?: string; username?: string };
+      const mediaId = String((v.media as Json | undefined)?.id ?? "");
+      const { data: known } = await sb.from("social_comments").select("media_caption, media_permalink, media_thumbnail").eq("channel_account_id", acc.id).eq("media_id", mediaId).not("media_permalink", "is", null).limit(1).maybeSingle();
+      const media = known ? { caption: known.media_caption as string, permalink: known.media_permalink as string, thumb: known.media_thumbnail as string } : await IG.igMediaInfo(env, await tok(), mediaId).then((x) => ({ caption: x.caption, permalink: x.permalink, thumb: x.thumbnail_url ?? x.media_url })).catch(() => ({ caption: undefined, permalink: undefined, thumb: undefined }));
+      const row = commentRow(acc, { id: String(v.id), parent: (v.parent_id as string) ?? null, text: v.text as string, username: from.username, fromId: from.id, at: now(), mediaId, ...media });
+      await sb.from("social_comments").upsert(row, { onConflict: "channel_account_id,external_id" });
+      if (row.from_owner && row.parent_external_id) await sb.from("social_comments").update({ replied: true, reply_text: row.body }).eq("channel_account_id", acc.id).eq("external_id", row.parent_external_id);
+      if (!row.from_owner) await dispatchEvent(sb, acc.workspace_id, "comentario.recebido", { canal: "instagram", tipo: "comentario", id: row.external_id, autor: from.username ?? null, texto: row.body, publicacao: media.permalink ?? mediaId, conta: acc.name });
+    } else if (ch.field === "mentions") {
+      const commentId = (v.comment_id as string) ?? null;
+      const mediaId = String(v.media_id ?? "");
+      let text = "";
+      let username: string | undefined;
+      let info: IG.IgMedia = { id: mediaId };
+      try {
+        const t = await tok();
+        if (commentId) { const c = await IG.igComment(env, t, commentId); text = c.text ?? ""; username = c.username ?? c.from?.username; }
+        info = await IG.igMediaInfo(env, t, mediaId);
+        if (!commentId) text = info.caption ?? "";
+      } catch { /* sem permissão para ler a menção: guarda só os ids */ }
+      await sb.from("social_comments").upsert(commentRow(acc, { id: commentId ?? `media:${mediaId}`, kind: "mention", text, username, at: now(), mediaId, caption: info.caption, permalink: info.permalink, thumb: info.thumbnail_url ?? info.media_url }), { onConflict: "channel_account_id,external_id" });
+      await dispatchEvent(sb, acc.workspace_id, "comentario.recebido", { canal: "instagram", tipo: "mencao", autor: username ?? null, texto: text, publicacao: info.permalink ?? mediaId, conta: acc.name });
+    }
+  }
+}
+
+export async function handleChannelWebhook(req: Request, env: Env): Promise<Response> {
+  const url = new URL(req.url);
+  const sb = serviceClient(env);
+  const key = url.searchParams.get("conta");
+  if (!sb) return new Response("indisponível", { status: 503 });
+  const { data: conn } = key ? await sb.from("platform_connections").select("id, workspace_id, platform, auth_mode").eq("webhook_key", key).maybeSingle() : { data: null };
+  if (key && !conn) return new Response("conexão desconhecida", { status: 404 });
+
+  if (req.method === "GET") {
+    const expected = key ? key : env.META_WEBHOOK_VERIFY_TOKEN;
+    if (url.searchParams.get("hub.mode") === "subscribe" && expected && url.searchParams.get("hub.verify_token") === expected) return new Response(url.searchParams.get("hub.challenge") ?? "", { status: 200, headers: { "content-type": "text/plain" } });
+    return new Response("verificação recusada", { status: 403 });
+  }
+  if (req.method !== "POST") return new Response("método não suportado", { status: 405 });
+
+  const raw = await req.text();
+  // Assinatura: app do NinePro sempre; app do cliente quando conhecemos a chave secreta (senão a chave da URL autentica)
+  let secrets: string[] = [];
+  if (conn) {
+    const p = conn.platform as ChannelId;
+    const auth = await loadAuth(sb, env, conn.id as string).catch(() => null);
+    const own = conn.auth_mode === "app_proprio" ? await loadOwnApp(sb, env, conn.workspace_id as string, p).catch(() => null) : null;
+    secrets = [auth?.extra?.appSecret, own?.appSecret].filter(Boolean) as string[];
+  } else {
+    secrets = [env.META_APP_SECRET, env.INSTAGRAM_APP_SECRET].filter(Boolean) as string[];
+    if (!secrets.length) return new Response("webhook do NinePro não configurado", { status: 403 });
+  }
+  if (secrets.length && !(await signatureOk(secrets, raw, req.headers.get("x-hub-signature-256")))) return new Response("assinatura inválida", { status: 401 });
+
+  let payload: Json;
+  try { payload = JSON.parse(raw) as Json; } catch { return new Response("corpo inválido", { status: 400 }); }
+  const connectionId = conn?.id as string | undefined;
+  try {
+    for (const entry of (payload.entry ?? []) as Json[]) {
+      if (payload.object === "whatsapp_business_account") for (const change of (entry.changes ?? []) as Json[]) await handleWhatsAppChange(sb, env, change, connectionId);
+      else if (payload.object === "instagram" || payload.object === "page") await handleInstagramEntry(sb, env, entry, connectionId);
+    }
+  } catch (e) {
+    console.error("webhook de canal:", msg(e)); // responde 200 para a Meta não reenviar em loop; mensagens são idempotentes
+  }
+  return new Response("ok", { status: 200 });
+}
+
+/* ------------------------------------------------------------------ ações enviadas pelas telas e pelos agentes */
+export interface ChannelCtx { sb: SupabaseClient; env: Env; ws: string; userId: string | null }
+
+async function loadAccount(ctx: ChannelCtx, id: string): Promise<Account> {
+  const { data } = await ctx.sb.from("channel_accounts").select(ACCOUNT_COLS).eq("workspace_id", ctx.ws).eq("id", id).maybeSingle();
+  if (!data) throw new PlatformError("Canal não encontrado.");
+  return data as Account;
+}
+
+/** Responde uma conversa (texto e/ou mídia por URL pública). */
+export async function sendToConversation(ctx: ChannelCtx, conversationId: string, text: string, media?: { url: string; type: "image" | "video" | "document" | "audio" }) {
+  const { data: conv } = await ctx.sb.from("conversations").select("id, channel_account_id, external_thread_id, last_inbound_at").eq("workspace_id", ctx.ws).eq("id", conversationId).maybeSingle();
+  if (!conv?.channel_account_id) throw new PlatformError("Conversa não encontrada ou sem canal conectado.");
+  const acc = await loadAccount(ctx, conv.channel_account_id as string);
+  const inbound = conv.last_inbound_at ? Date.parse(conv.last_inbound_at as string) : 0;
+  if (Date.now() - inbound > DAY) throw new PlatformError(acc.kind === "whatsapp" ? "Passaram mais de 24 horas desde a última mensagem do cliente. No WhatsApp, agora só é possível enviar um modelo aprovado." : "Passaram mais de 24 horas desde a última mensagem do cliente. O Instagram só permite responder dentro dessa janela.");
+  const token = tokenOf(await channelAuth(ctx.sb, ctx.env, acc.kind, acc.connection_id));
+  const to = conv.external_thread_id as string;
+  const body = text.trim();
+  if (!body && !media) throw new PlatformError("Escreva a mensagem.");
+  let externalId: string | null;
+  if (acc.kind === "whatsapp") externalId = media ? await WA.waSendMedia(ctx.env, token, acc.external_id, to, media.type, media.url, body || undefined) : await WA.waSendText(ctx.env, token, acc.external_id, to, body);
+  else {
+    externalId = null;
+    if (media) externalId = await IG.igSendImage(ctx.env, token, acc.external_id, to, media.url);
+    if (body) externalId = await IG.igSendText(ctx.env, token, acc.external_id, to, body);
+  }
+  const at = now();
+  const preview = body || `[${media?.type === "image" ? "Foto" : "Anexo"}]`;
+  await saveMessage(ctx.sb, ctx.ws, conversationId, { externalId, direction: "out", body: preview, kind: media?.type ?? "text", mediaUrl: media?.url ?? null, status: "enviada", at, authorId: ctx.userId });
+  await ctx.sb.from("conversations").update({ last_message_at: at, last_message_preview: preview.slice(0, 280), unread: 0 }).eq("id", conversationId);
+  await dispatchEvent(ctx.sb, ctx.ws, "mensagem.enviada", { canal: acc.kind, conversa_id: conversationId, texto: preview, enviada_em: at });
+  return { ok: true, id: externalId };
+}
+
+const digits = (s: string) => s.replace(/\D/g, "");
+/** Envia um modelo aprovado do WhatsApp (único jeito de iniciar conversa ou falar depois de 24 h). */
+export async function sendTemplate(ctx: ChannelCtx, p: { accountId?: string; to: string; templateId: string; bodyParams?: string[]; headerParams?: string[]; contactName?: string }) {
+  const { data: tpl } = await ctx.sb.from("wa_templates").select("name, language, status, waba_id, components").eq("workspace_id", ctx.ws).eq("id", p.templateId).maybeSingle();
+  if (!tpl) throw new PlatformError("Modelo não encontrado.");
+  if (tpl.status !== "APPROVED") throw new PlatformError("Esse modelo ainda não foi aprovado pela Meta.");
+  let accQ = ctx.sb.from("channel_accounts").select(ACCOUNT_COLS).eq("workspace_id", ctx.ws).eq("kind", "whatsapp").eq("parent_external_id", tpl.waba_id as string);
+  if (p.accountId) accQ = accQ.eq("id", p.accountId);
+  const { data: accs } = await accQ.limit(1);
+  const acc = accs?.[0] as Account | undefined;
+  if (!acc) throw new PlatformError("Nenhum número dessa conta do WhatsApp Business está conectado.");
+  const to = digits(p.to);
+  if (to.length < 10 || to.length > 15) throw new PlatformError("Informe o número com DDI e DDD, ex.: +55 11 91234-5678.");
+  const token = tokenOf(await channelAuth(ctx.sb, ctx.env, "whatsapp", acc.connection_id));
+  const bodyParams = (p.bodyParams ?? []).map(String);
+  const externalId = await WA.waSendTemplate(ctx.env, token, acc.external_id, to, tpl.name as string, tpl.language as string, bodyParams, (p.headerParams ?? []).map(String));
+  const bodyTpl = ((tpl.components as { type: string; text?: string }[]) ?? []).find((c) => c.type === "BODY")?.text ?? tpl.name;
+  const rendered = String(bodyTpl).replace(/\{\{(\d+)\}\}/g, (_, n) => bodyParams[Number(n) - 1] ?? `{{${n}}}`);
+  const at = now();
+  const convId = await ensureConversation(ctx.sb, acc, to, { contactName: p.contactName?.trim() || `+${to}`, handle: `+${to}`, at, preview: rendered, inbound: false });
+  await saveMessage(ctx.sb, ctx.ws, convId, { externalId, direction: "out", body: rendered, kind: "template", status: "enviada", at, authorId: ctx.userId });
+  await dispatchEvent(ctx.sb, ctx.ws, "mensagem.enviada", { canal: "whatsapp", conversa_id: convId, para: `+${to}`, modelo: tpl.name, texto: rendered, enviada_em: at });
+  return { ok: true, conversationId: convId, id: externalId };
+}
+
+async function loadComment(ctx: ChannelCtx, id: string) {
+  const { data } = await ctx.sb.from("social_comments").select("id, external_id, channel_account_id, media_id, media_caption, media_permalink, media_thumbnail").eq("workspace_id", ctx.ws).eq("id", id).maybeSingle();
+  if (!data) throw new PlatformError("Comentário não encontrado.");
+  const acc = await loadAccount(ctx, data.channel_account_id as string);
+  const token = tokenOf(await channelAuth(ctx.sb, ctx.env, acc.kind, acc.connection_id));
+  return { c: data, acc, token };
+}
+export async function replyComment(ctx: ChannelCtx, commentId: string, text: string, privately = false) {
+  const body = text.trim();
+  if (!body) throw new PlatformError("Escreva a resposta.");
+  const { c, acc, token } = await loadComment(ctx, commentId);
+  if (privately) await IG.igPrivateReply(ctx.env, token, acc.external_id, c.external_id as string, body);
+  else {
+    const r = await IG.igReplyComment(ctx.env, token, c.external_id as string, body);
+    await ctx.sb.from("social_comments").upsert(commentRow(acc, { id: r.id, parent: c.external_id as string, text: body, username: acc.name.replace(/^@/, ""), fromId: acc.external_id, mediaId: c.media_id as string, caption: c.media_caption as string, permalink: c.media_permalink as string, thumb: c.media_thumbnail as string }), { onConflict: "channel_account_id,external_id" });
+  }
+  await ctx.sb.from("social_comments").update({ replied: true, reply_text: privately ? `[Mensagem direta] ${body}` : body }).eq("id", commentId);
+  return { ok: true };
+}
+
+/** Publica uma publicação nas contas do Instagram marcadas nela. */
+export async function publishPost(sb: SupabaseClient, env: Env, postId: string) {
+  const { data: post } = await sb.from("posts").select("id, workspace_id, content, channel_account_ids, media_urls, media_type, attempts").eq("id", postId).maybeSingle();
+  if (!post) throw new PlatformError("Publicação não encontrada.");
+  const ws = post.workspace_id as string;
+  const ids = (post.channel_account_ids as string[]) ?? [];
+  if (!ids.length) throw new PlatformError("Escolha ao menos uma conta do Instagram.");
+  const { data: accs } = await sb.from("channel_accounts").select(ACCOUNT_COLS).eq("workspace_id", ws).in("id", ids);
+  const result: Record<string, { id?: string; permalink?: string | null; erro?: string; conta: string }> = {};
+  for (const acc of (accs ?? []) as Account[]) {
+    try {
+      if (acc.kind !== "instagram") throw new PlatformError("Publicação só está disponível para o Instagram.");
+      const token = tokenOf(await channelAuth(sb, env, "instagram", acc.connection_id));
+      const r = await IG.igPublish(env, token, acc.external_id, { type: post.media_type as "IMAGE", urls: (post.media_urls as string[]) ?? [], caption: post.content as string });
+      result[acc.id] = { id: r.id, permalink: r.permalink, conta: acc.name };
+    } catch (e) { result[acc.id] = { erro: msg(e), conta: acc.name }; }
+  }
+  const ok = Object.values(result).filter((r) => r.id).length;
+  const errors = Object.values(result).filter((r) => r.erro).map((r) => `${r.conta}: ${r.erro}`);
+  const status = ok ? "publicada" : "falhou";
+  await sb.from("posts").update({ status, result, error: errors.join(" · ") || null, published_at: ok ? now() : null, attempts: ((post.attempts as number) ?? 0) + 1, updated_at: now() }).eq("id", postId);
+  await dispatchEvent(sb, ws, (ok ? "publicacao.publicada" : "publicacao.falhou") as WebhookEvent, { publicacao_id: postId, resultado: result });
+  return { ok: ok > 0, status, result, error: errors[0] ?? null };
+}
+
+/** Cria ou altera uma publicação (rascunho, agendada ou para publicar agora). */
+export async function savePost(ctx: ChannelCtx, p: Json) {
+  const content = String(p.content ?? "").slice(0, 2200);
+  const accountIds = (Array.isArray(p.accountIds) ? p.accountIds : []).map(String).slice(0, 20);
+  const mediaUrls = (Array.isArray(p.mediaUrls) ? p.mediaUrls : []).map(String).filter((u) => /^https:\/\//.test(u)).slice(0, 10);
+  const mediaType = ["IMAGE", "VIDEO", "REELS", "CAROUSEL", "STORIES"].includes(String(p.mediaType)) ? String(p.mediaType) : mediaUrls.length > 1 ? "CAROUSEL" : "IMAGE";
+  const when = p.scheduledAt ? new Date(String(p.scheduledAt)) : null;
+  const mode = p.mode === "agora" ? "agora" : p.mode === "agendar" ? "agendar" : "rascunho";
+  if (mode !== "rascunho") {
+    if (!accountIds.length) throw new PlatformError("Escolha ao menos uma conta do Instagram.");
+    if (!mediaUrls.length) throw new PlatformError("Adicione ao menos uma imagem ou vídeo. O Instagram não publica só texto.");
+  }
+  if (mode === "agendar" && (!when || Number.isNaN(when.getTime()) || when.getTime() < Date.now() + 60_000)) throw new PlatformError("Escolha uma data e hora no futuro.");
+  const { data: accs } = accountIds.length ? await ctx.sb.from("channel_accounts").select("id, name").eq("workspace_id", ctx.ws).in("id", accountIds) : { data: [] };
+  const row = { workspace_id: ctx.ws, content, channels: accs?.length ? ["Instagram"] : [], channel_account_ids: (accs ?? []).map((a) => a.id), media_urls: mediaUrls, media_type: mediaType,
+    status: mode === "agendar" ? "agendada" : mode === "agora" ? "agendada" : "rascunho", scheduled_at: mode === "agendar" ? when!.toISOString() : mode === "agora" ? now() : null, error: null, attempts: 0, updated_at: now() };
+  const id = p.id ? String(p.id) : null;
+  const q = id ? ctx.sb.from("posts").update(row).eq("workspace_id", ctx.ws).eq("id", id) : ctx.sb.from("posts").insert({ ...row, created_by: ctx.userId });
+  const { data, error } = await q.select("id").single();
+  if (error || !data) throw new Error(error?.message ?? "Não foi possível salvar.");
+  if (mode === "agora") return { id: data.id as string, ...(await publishPost(ctx.sb, ctx.env, data.id as string)) };
+  return { id: data.id as string, ok: true, status: row.status };
+}
+
+/* ------------------------------------------------------------------ handler HTTP das telas */
+export async function handleChannels(req: Request, env: Env): Promise<Response> {
+  if (req.method !== "POST") return json(405, { error: "Método não suportado." });
+  const sb = serviceClient(env);
+  if (!sb) return json(503, { error: FRIENDLY });
+  const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  const { data: u } = token ? await sb.auth.getUser(token) : { data: { user: null } };
+  if (!u.user) return json(401, { error: "Sessão inválida. Entre de novo." });
+  const body = (await req.json().catch(() => ({}))) as Json;
+  const ws = String(body.workspaceId ?? "");
+  const { data: mem } = await sb.from("workspace_members").select("role").eq("workspace_id", ws).eq("user_id", u.user.id).maybeSingle();
+  if (!mem) return json(403, { error: "Você não faz parte deste espaço." });
+  const isAdmin = ["owner", "admin"].includes(mem.role as string);
+  const ctx: ChannelCtx = { sb, env, ws, userId: u.user.id };
+  const str = (k: string) => String(body[k] ?? "");
+  try {
+    switch (body.action) {
+      case "send_message": {
+        const media = body.mediaUrl ? { url: str("mediaUrl"), type: (["image", "video", "document", "audio"].includes(str("mediaType")) ? str("mediaType") : "image") as "image" } : undefined;
+        return json(200, await sendToConversation(ctx, str("conversationId"), str("text"), media));
+      }
+      case "send_template":
+        return json(200, await sendTemplate(ctx, { accountId: body.accountId ? str("accountId") : undefined, to: str("to"), templateId: str("templateId"), bodyParams: body.bodyParams as string[], headerParams: body.headerParams as string[], contactName: str("contactName") }));
+      case "mark_read": {
+        const { data: conv } = await sb.from("conversations").select("id, channel_account_id").eq("workspace_id", ws).eq("id", str("conversationId")).maybeSingle();
+        if (!conv) return json(404, { error: "Conversa não encontrada." });
+        await sb.from("conversations").update({ unread: 0 }).eq("id", conv.id);
+        const acc = conv.channel_account_id ? await loadAccount(ctx, conv.channel_account_id as string).catch(() => null) : null;
+        if (acc?.kind === "whatsapp") {
+          const { data: last } = await sb.from("messages").select("external_id").eq("conversation_id", conv.id).eq("direction", "in").not("external_id", "is", null).order("sent_at", { ascending: false }).limit(1).maybeSingle();
+          if (last?.external_id) await channelAuth(sb, env, "whatsapp", acc.connection_id).then((a) => WA.waMarkRead(env, tokenOf(a), acc.external_id, last.external_id as string)).catch(() => undefined);
+        }
+        return json(200, { ok: true });
+      }
+      case "comment_reply": return json(200, await replyComment(ctx, str("commentId"), str("text"), body.private === true));
+      case "comment_hide": {
+        const { c, token: t } = await loadComment(ctx, str("commentId"));
+        await IG.igHideComment(env, t, c.external_id as string, body.hidden === true);
+        await sb.from("social_comments").update({ hidden: body.hidden === true }).eq("id", c.id);
+        return json(200, { ok: true });
+      }
+      case "comment_delete": {
+        const { c, token: t } = await loadComment(ctx, str("commentId"));
+        await IG.igDeleteComment(env, t, c.external_id as string);
+        await sb.from("social_comments").delete().eq("id", c.id);
+        return json(200, { ok: true });
+      }
+      case "template_create": {
+        if (!isAdmin) return json(403, { error: "Só administradores do espaço podem criar modelos." });
+        const acc = await loadAccount(ctx, str("accountId"));
+        if (acc.kind !== "whatsapp" || !acc.parent_external_id) return json(400, { error: "Escolha um número do WhatsApp." });
+        const name = str("name").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 512);
+        if (!name) return json(400, { error: "Dê um nome ao modelo." });
+        const text = str("body").trim();
+        if (!text) return json(400, { error: "Escreva o texto do modelo." });
+        const vars = [...new Set([...text.matchAll(/\{\{(\d+)\}\}/g)].map((m) => Number(m[1])))].sort((a, b) => a - b);
+        const examples = (Array.isArray(body.examples) ? body.examples : []).map(String);
+        if (vars.length && examples.filter(Boolean).length < vars.length) return json(400, { error: `Dê um exemplo para cada variável ({{1}}…{{${vars.length}}}). A Meta exige.` });
+        const components: Json[] = [];
+        if (str("header").trim()) components.push({ type: "HEADER", format: "TEXT", text: str("header").trim().slice(0, 60) });
+        components.push({ type: "BODY", text, ...(vars.length ? { example: { body_text: [examples.slice(0, vars.length)] } } : {}) });
+        if (str("footer").trim()) components.push({ type: "FOOTER", text: str("footer").trim().slice(0, 60) });
+        const buttons = (Array.isArray(body.buttons) ? body.buttons : []).map(String).map((b) => b.trim()).filter(Boolean).slice(0, 3);
+        if (buttons.length) components.push({ type: "BUTTONS", buttons: buttons.map((b) => ({ type: "QUICK_REPLY", text: b.slice(0, 25) })) });
+        const category = ["MARKETING", "UTILITY", "AUTHENTICATION"].includes(str("category")) ? str("category") : "MARKETING";
+        const language = /^[a-z]{2}(_[A-Z]{2})?$/.test(str("language")) ? str("language") : "pt_BR";
+        const t = tokenOf(await channelAuth(sb, env, "whatsapp", acc.connection_id));
+        const r = await WA.waCreateTemplate(env, t, acc.parent_external_id, { name, language, category, components });
+        await sb.from("wa_templates").upsert({ workspace_id: ws, connection_id: acc.connection_id, waba_id: acc.parent_external_id, external_id: r.id, name, language, category: r.category ?? category, status: r.status ?? "PENDING", components, updated_at: now() }, { onConflict: "waba_id,external_id" });
+        return json(200, { ok: true, id: r.id, status: r.status ?? "PENDING" });
+      }
+      case "template_delete": {
+        if (!isAdmin) return json(403, { error: "Só administradores do espaço podem excluir modelos." });
+        const { data: tpl } = await sb.from("wa_templates").select("id, name, external_id, waba_id, connection_id").eq("workspace_id", ws).eq("id", str("templateId")).maybeSingle();
+        if (!tpl) return json(404, { error: "Modelo não encontrado." });
+        const t = tokenOf(await channelAuth(sb, env, "whatsapp", tpl.connection_id as string));
+        await WA.waDeleteTemplate(env, t, tpl.waba_id as string, tpl.name as string, tpl.external_id as string);
+        await sb.from("wa_templates").delete().eq("id", tpl.id);
+        return json(200, { ok: true });
+      }
+      case "post_save": return json(200, await savePost(ctx, body));
+      case "post_publish": {
+        const { data: post } = await sb.from("posts").select("id").eq("workspace_id", ws).eq("id", str("postId")).maybeSingle();
+        if (!post) return json(404, { error: "Publicação não encontrada." });
+        return json(200, await publishPost(sb, env, post.id as string));
+      }
+      case "post_delete": {
+        await sb.from("posts").delete().eq("workspace_id", ws).eq("id", str("postId")).neq("status", "publicada");
+        return json(200, { ok: true });
+      }
+      case "toggle_channel": {
+        if (!isAdmin) return json(403, { error: "Só administradores do espaço podem fazer isso." });
+        await sb.from("channel_accounts").update({ enabled: body.enabled === true, updated_at: now() }).eq("workspace_id", ws).eq("id", str("accountId"));
+        return json(200, { ok: true });
+      }
+      default:
+        return json(400, { error: "Ação desconhecida." });
+    }
+  } catch (e) {
+    if (e instanceof PlatformError) return json(400, { error: e.expired ? "As credenciais do canal expiraram. Reconecte em Conexões." : e.message });
+    console.error(e);
+    return json(500, { error: FRIENDLY });
+  }
+}
+
+/** Vercel Cron: publica as publicações agendadas que já venceram. */
+export async function handlePublishDue(req: Request, env: Env): Promise<Response> {
+  if (!env.CRON_SECRET || req.headers.get("authorization") !== `Bearer ${env.CRON_SECRET}`) return json(401, { error: "Não autorizado." });
+  const sb = serviceClient(env);
+  if (!sb) return json(503, { error: "Servidor sem SUPABASE_SERVICE_ROLE_KEY configurada." });
+  const { data: due } = await sb.from("posts").select("id").eq("status", "agendada").lte("scheduled_at", now()).lt("attempts", 3).order("scheduled_at").limit(20);
+  const results = [];
+  for (const p of due ?? []) results.push({ id: p.id, ...(await publishPost(sb, env, p.id as string).catch((e) => ({ ok: false, error: msg(e) }))) });
+  return json(200, { publicadas: results.filter((r) => r.ok).length, results });
+}
+
+export { isChannel };

@@ -7,7 +7,8 @@
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { decryptToken, encryptToken, signState, verifyState } from "./crypto.js";
-import { isPlatform, PlatformError, PROVIDERS, type AppCreds, type AuthMode, type ExchangeResult, type NAccount, type PlatformId, type StoredAuth } from "./platforms/index.js";
+import { CONNECTORS, isChannel, isConnector, isPlatform, PlatformError, PROVIDERS, type AppCreds, type AuthMode, type ConnectorId, type ExchangeResult, type NAccount, type PlatformId, type StoredAuth } from "./platforms/index.js";
+import { syncChannel } from "./channels.js";
 
 type Env = Record<string, string | undefined>;
 type Json = Record<string, unknown>;
@@ -35,7 +36,7 @@ async function chunked<T>(rows: T[], size: number, fn: (part: T[]) => PromiseLik
 }
 
 /* ------------------------------------------------------------------ segredos */
-async function loadAuth(sb: SupabaseClient, env: Env, connectionId: string): Promise<StoredAuth> {
+export async function loadAuth(sb: SupabaseClient, env: Env, connectionId: string): Promise<StoredAuth> {
   const { data } = await sb.from("platform_tokens").select("access_token_enc").eq("connection_id", connectionId).maybeSingle();
   if (!data) throw new PlatformError("Conexão sem credenciais. Conecte de novo.", true);
   const raw = await decryptToken(env, data.access_token_enc as string);
@@ -43,7 +44,7 @@ async function loadAuth(sb: SupabaseClient, env: Env, connectionId: string): Pro
   return { accessToken: raw };
 }
 
-async function saveConnection(sb: SupabaseClient, env: Env, p: PlatformId, c: { ws: string; uid: string; mode: AuthMode; appId?: string | null } & ExchangeResult) {
+export async function saveConnection(sb: SupabaseClient, env: Env, p: ConnectorId, c: { ws: string; uid: string; mode: AuthMode; appId?: string | null } & ExchangeResult) {
   const { data: conn, error } = await sb.from("platform_connections").upsert({
     workspace_id: c.ws, platform: p, external_user_id: c.user.id, external_user_name: c.user.name, scopes: c.scopes, auth_mode: c.mode, app_id: c.appId ?? null,
     status: "ativa", last_error: null, token_expires_at: c.expiresAt, connected_by: c.uid, updated_at: now(),
@@ -54,7 +55,7 @@ async function saveConnection(sb: SupabaseClient, env: Env, p: PlatformId, c: { 
   return conn.id as string;
 }
 
-async function loadOwnApp(sb: SupabaseClient, env: Env, ws: string, p: PlatformId): Promise<AppCreds | null> {
+export async function loadOwnApp(sb: SupabaseClient, env: Env, ws: string, p: ConnectorId): Promise<AppCreds | null> {
   const { data } = await sb.from("platform_app_credentials").select("app_id, app_secret_enc").eq("workspace_id", ws).eq("platform", p).maybeSingle();
   if (!data) return null;
   const raw = await decryptToken(env, data.app_secret_enc as string);
@@ -200,19 +201,19 @@ export async function handleConnect(req: Request, env: Env): Promise<Response> {
   if (req.method === "GET") {
     const url = new URL(req.url);
     const state = url.searchParams.get("state");
-    let platform: PlatformId = "meta";
+    let platform: ConnectorId = "meta";
     const back = (q: string) => redirect(`${origin}/conexoes?plataforma=${platform}&${q}`);
     try {
       if (!sb || !state) throw new Error("Retorno incompleto da plataforma.");
       const st = await verifyState<{ ws: string; uid: string; p: string; mode?: AuthMode }>(env, state);
-      if (!isPlatform(st.p)) throw new Error("Plataforma desconhecida.");
+      if (!isConnector(st.p)) throw new Error("Plataforma desconhecida.");
       platform = st.p;
       if (url.searchParams.get("error") || url.searchParams.get("error_code")) return back("resultado=cancelado");
       const code = url.searchParams.get("code") ?? url.searchParams.get("auth_code");
       if (!code) throw new Error("A plataforma não devolveu a autorização.");
       const role = await roleIn(sb, st.ws, st.uid);
       if (!role || !["owner", "admin"].includes(role)) throw new Error("Só administradores do espaço podem conectar contas.");
-      const prov = PROVIDERS[platform];
+      const prov = CONNECTORS[platform];
       const mode: AuthMode = st.mode === "app_proprio" ? "app_proprio" : "app_ninepro";
       const app = mode === "app_proprio" ? await loadOwnApp(sb, env, st.ws, platform) : prov.nineproApp(env);
       if (!app) throw new Error("As credenciais do app não foram encontradas. Informe de novo.");
@@ -233,8 +234,8 @@ export async function handleConnect(req: Request, env: Env): Promise<Response> {
   const role = await roleIn(sb, ws, user.id);
   if (!role) return json(403, { error: "Você não faz parte deste espaço." });
   const isAdmin = ["owner", "admin"].includes(role);
-  const platform: PlatformId = isPlatform(body.platform) ? body.platform : "meta";
-  const prov = PROVIDERS[platform];
+  const platform: ConnectorId = isConnector(body.platform) ? body.platform : "meta";
+  const prov = CONNECTORS[platform];
   const adminOnly = () => json(403, { error: "Só administradores do espaço podem fazer isso." });
   const needKey = () => { if (!env.TOKEN_ENCRYPTION_KEY) { console.error("TOKEN_ENCRYPTION_KEY ausente"); return json(503, { error: FRIENDLY }); } return null; };
 
@@ -277,6 +278,7 @@ export async function handleConnect(req: Request, env: Env): Promise<Response> {
       case "sync": {
         const { data: conn } = await sb.from("platform_connections").select("id, workspace_id, platform").eq("workspace_id", ws).eq("platform", platform).maybeSingle();
         if (!conn) return json(404, { error: `Nenhuma conta do ${prov.label} conectada.` });
+        if (isChannel(platform)) { const r = await syncChannel(sb, env, { id: conn.id as string, workspace_id: ws, platform }, "manual"); return json(r.ok ? 200 : 502, r); }
         const r = await syncConnection(sb, env, conn as ConnRow, "manual", Math.min(90, Math.max(1, Number(body.days ?? 30))));
         return json(r.ok ? 200 : 502, r.ok ? r : { ...r, error: r.error });
       }
@@ -288,6 +290,7 @@ export async function handleConnect(req: Request, env: Env): Promise<Response> {
       case "disconnect": {
         if (!isAdmin) return adminOnly();
         await sb.from("platform_connections").delete().eq("workspace_id", ws).eq("platform", platform);
+        if (isChannel(platform)) await sb.from("channel_accounts").update({ status: "desconectado", updated_at: now() }).eq("workspace_id", ws).eq("kind", platform).is("connection_id", null);
         if (body.forgetApp === true) await sb.from("platform_app_credentials").delete().eq("workspace_id", ws).eq("platform", platform);
         return json(200, { ok: true });
       }

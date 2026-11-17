@@ -64,7 +64,7 @@ export function ConnectModal({ platform, open, onOpenChange, ws, call, onConnect
   };
 
   const choices: { id: Mode; icon: JSX.Element; title: string; desc: string; show: boolean }[] = [
-    { id: "app_ninepro", icon: <LogIn />, title: guide.loginLabel, desc: "O jeito mais simples: entre com a sua conta e escolha as contas de anúncio.", show: !!opts?.ninepro },
+    { id: "app_ninepro", icon: <LogIn />, title: guide.loginLabel, desc: "O jeito mais simples: entre com a sua conta e autorize o NinePro.", show: !!opts?.ninepro },
     { id: "app_proprio", icon: <AppWindow />, title: "App da sua empresa", desc: guide.appDesc, show: true },
     { id: "token", icon: <KeyRound />, title: "Token de acesso", desc: guide.tokenDesc, show: true },
   ];

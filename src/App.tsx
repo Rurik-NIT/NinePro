@@ -40,6 +40,10 @@ const msg = () => import("@/pages/comm/Messaging");
 const inbox = () => import("@/pages/inbox/Inbox");
 const posts = () => import("@/pages/posts/Posts");
 const analytics = () => import("@/pages/analytics/Analytics");
+const liveInbox = () => import("@/pages/channels/LiveInbox");
+const liveSocial = () => import("@/pages/channels/LiveSocial");
+const LiveComments = lazy(() => import("@/pages/channels/LiveInbox").then((m) => ({ default: () => <m.LiveInboxComments kind="comment" /> })));
+const LiveMentions = lazy(() => import("@/pages/channels/LiveInbox").then((m) => ({ default: () => <m.LiveInboxComments kind="mention" /> })));
 const biz = () => import("@/pages/misc/Business");
 const cons = () => import("@/pages/console/Console");
 const ConsoleTeam = lazy(() => import("@/pages/dev/Developers").then((m) => ({ default: () => <m.Members title="Equipe" /> })));
@@ -51,6 +55,11 @@ function HomeRoute() {
 
 const S = (el: JSX.Element) => <Suspense fallback={<LoadingState />}>{el}</Suspense>;
 const N = (loader: () => Promise<Record<string, unknown>>, key: string) => { const C = named(loader, key); return S(<C />); };
+/** Com banco conectado mostra a tela real; no modo demonstração, o exemplo. */
+function LiveOr({ live, demo }: { live: JSX.Element; demo: JSX.Element }) {
+  return useAuth().mode === "demo" ? demo : live;
+}
+const L = (live: JSX.Element, demo: JSX.Element) => <LiveOr live={live} demo={demo} />;
 const hidden = (title: string, description: string) => S(<Campaigns variant={{ title, description }} />);
 
 const router = createBrowserRouter([
@@ -65,7 +74,7 @@ const router = createBrowserRouter([
       { index: true, element: <HomeRoute /> },
       { path: "conexoes", element: S(<Connections />) },
 
-      { path: "publicacoes", element: <DemoOnly title="Publicações" area="as redes sociais">{N(posts, "PostsAll")}</DemoOnly> },
+      { path: "publicacoes", element: L(N(liveSocial, "LivePosts"), N(posts, "PostsAll")) },
       { path: "publicacoes/filas", element: <DemoOnly title="Filas de publicação" area="as redes sociais">{N(posts, "PostsQueues")}</DemoOnly> },
       { path: "publicacoes/hashtags", element: <Navigate to="/conexoes" replace /> },
       { path: "ao-vivo", element: <Navigate to="/conexoes" replace /> },
@@ -74,10 +83,10 @@ const router = createBrowserRouter([
       { path: "analises/caixa-de-entrada", element: <DemoOnly title="Análises da caixa de entrada" area="as redes sociais">{N(analytics, "AnalyticsInbox")}</DemoOnly> },
       { path: "analises/site", element: <DemoOnly title="Análises do site" area="a tag do site">{N(analytics, "AnalyticsWebsite")}</DemoOnly> },
 
-      { path: "caixa-de-entrada/mensagens", element: <DemoOnly title="Mensagens" area="as redes sociais">{N(inbox, "InboxMessages")}</DemoOnly> },
-      { path: "caixa-de-entrada/comentarios", element: <DemoOnly title="Comentários" area="as redes sociais">{N(inbox, "InboxComments")}</DemoOnly> },
+      { path: "caixa-de-entrada/mensagens", element: L(N(liveInbox, "LiveInboxMessages"), N(inbox, "InboxMessages")) },
+      { path: "caixa-de-entrada/comentarios", element: L(S(<LiveComments />), N(inbox, "InboxComments")) },
       { path: "caixa-de-entrada/avaliacoes", element: <DemoOnly title="Avaliações" area="as redes sociais">{N(inbox, "InboxReviews")}</DemoOnly> },
-      { path: "caixa-de-entrada/mencoes", element: <DemoOnly title="Menções" area="as redes sociais">{N(inbox, "InboxMentions")}</DemoOnly> },
+      { path: "caixa-de-entrada/mencoes", element: L(S(<LiveMentions />), N(inbox, "InboxMentions")) },
       { path: "caixa-de-entrada/campanhas", element: <DemoOnly title="Campanhas de mensagens" area="as redes sociais">{N(inbox, "InboxCampaigns")}</DemoOnly> },
       { path: "caixa-de-entrada/fluxos", element: <DemoOnly title="Fluxos" area="as redes sociais">{N(inbox, "InboxWorkflows")}</DemoOnly> },
       { path: "caixa-de-entrada/contatos", element: <DemoOnly title="Contatos" area="as redes sociais">{N(inbox, "InboxContacts")}</DemoOnly> },
@@ -109,8 +118,8 @@ const router = createBrowserRouter([
       { path: "comercio/sincronizacao", element: <DemoOnly title="Sincronização" area="a sua loja">{N(biz, "CommerceSync")}</DemoOnly> },
       { path: "criadores", element: <DemoOnly title="Criadores" area="as redes sociais">{N(biz, "Creators")}</DemoOnly> },
 
-      { path: "whatsapp", element: <DemoOnly title="WhatsApp" area="o WhatsApp">{N(msg, "WhatsAppOverview")}</DemoOnly> },
-      { path: "whatsapp/modelos", element: <DemoOnly title="Modelos do WhatsApp" area="o WhatsApp">{N(msg, "WhatsAppTemplates")}</DemoOnly> },
+      { path: "whatsapp", element: L(N(liveSocial, "LiveWhatsAppOverview"), N(msg, "WhatsAppOverview")) },
+      { path: "whatsapp/modelos", element: L(N(liveSocial, "LiveWhatsAppTemplates"), N(msg, "WhatsAppTemplates")) },
       { path: "whatsapp/fluxos", element: <DemoOnly title="Fluxos do WhatsApp" area="o WhatsApp">{N(msg, "WhatsAppFlows")}</DemoOnly> },
       { path: "whatsapp/grupos", element: <DemoOnly title="Grupos do WhatsApp" area="o WhatsApp">{N(msg, "WhatsAppGroups")}</DemoOnly> },
       { path: "whatsapp/conversoes", element: <DemoOnly title="Conversões do WhatsApp" area="o WhatsApp">{N(msg, "WhatsAppConversions")}</DemoOnly> },

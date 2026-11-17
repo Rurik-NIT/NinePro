@@ -28,7 +28,7 @@ async function call<T>(body: Record<string, unknown>): Promise<T> {
 }
 
 /** Cartão de uma plataforma de anúncios: conectar, escolher contas, sincronizar e desconectar. */
-export function PlatformConnection({ platform }: { platform: PlatformKey }) {
+export function PlatformConnection({ platform }: { platform: Exclude<PlatformKey, "whatsapp" | "instagram"> }) {
   const guide = PLATFORM_GUIDE[platform];
   const { current } = useWorkspace();
   const data = useData();

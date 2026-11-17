@@ -10,6 +10,7 @@ import { InlineNotice } from "@/components/feedback/States";
 import { PlatformDot } from "@/components/data/Platform";
 import { useAuth } from "@/lib/auth";
 import { PlatformConnection } from "./connections/PlatformConnection";
+import { ChannelConnection } from "./connections/ChannelConnection";
 
 const SCOPES: Record<PlatformId, string[]> = {
   meta: ["Campanhas", "Conjuntos", "Anúncios", "Leads", "Públicos"],
@@ -57,6 +58,15 @@ function ConnectionsList({ onRedo }: { onRedo?: () => void }) {
           ))}
         </ul>
       </Section>
+
+      {live && (
+        <Section title="Mensagens e redes sociais" description="Atenda WhatsApp e Instagram pela caixa de entrada, responda comentários e publique.">
+          <ul className="grid grid-cols-1 gap-gutter md:grid-cols-2">
+            <ChannelConnection kind="whatsapp" />
+            <ChannelConnection kind="instagram" />
+          </ul>
+        </Section>
+      )}
 
       <Section title="Fontes de conversão" description="Para atribuir vendas e leads às campanhas.">
         <div className="panel divide-y divide-line-soft">

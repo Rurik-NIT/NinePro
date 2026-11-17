@@ -4,6 +4,8 @@
  */
 export type Env = Record<string, string | undefined>;
 export type PlatformId = "meta" | "google" | "tiktok" | "linkedin";
+export type ChannelId = "whatsapp" | "instagram";
+export type ConnectorId = PlatformId | ChannelId;
 export type AuthMode = "app_ninepro" | "app_proprio" | "token";
 export type Objective = "vendas" | "leads" | "trafego" | "reconhecimento";
 export type Delivery = "active" | "learning" | "limited" | "paused" | "ended";
@@ -25,8 +27,9 @@ export interface NInsight { adExternalId: string; date: string; spend: number; i
 /** Campo pedido ao cliente no modal de conexão. */
 export interface CredField { key: string; label: string; secret?: boolean; placeholder?: string; hint?: string; pattern?: string; multiline?: boolean; optional?: boolean }
 
-export interface Provider {
-  id: PlatformId;
+/** Parte comum a toda conexão: como autorizar (OAuth, app próprio ou token). */
+export interface Connector {
+  id: ConnectorId;
   label: string;
   /** App do NinePro disponível (variáveis de ambiente preenchidas)? */
   nineproApp(env: Env): AppCreds | null;
@@ -40,10 +43,26 @@ export interface Provider {
   fromToken(env: Env, fields: Record<string, string>): Promise<ExchangeResult>;
   /** Devolve uma autenticação pronta para chamar a API (renova o token quando preciso). */
   ready(env: Env, auth: StoredAuth): Promise<StoredAuth>;
+}
+
+/** Plataforma de anúncios. */
+export interface Provider extends Connector {
+  id: PlatformId;
   accounts(env: Env, auth: StoredAuth): Promise<NAccount[]>;
   structure(env: Env, auth: StoredAuth, account: NAccount): Promise<{ campaigns: NCampaign[]; adSets: NAdSet[]; ads: NAd[] }>;
   insights(env: Env, auth: StoredAuth, account: NAccount, since: string, until: string): Promise<NInsight[]>;
   setCampaignStatus(env: Env, auth: StoredAuth, account: NAccount, campaignExternalId: string, status: "active" | "paused"): Promise<void>;
+}
+
+/** Número de WhatsApp ou conta do Instagram encontrada na conexão. */
+export interface NChannelAccount { externalId: string; parentExternalId?: string | null; name: string; displayName?: string | null; picture?: string | null; status: string; quality?: string | null; detail?: Record<string, unknown> }
+
+/** Canal de mensagens / rede social. */
+export interface ChannelProvider extends Connector {
+  id: ChannelId;
+  discover(env: Env, auth: StoredAuth): Promise<NChannelAccount[]>;
+  /** Inscreve o app nos webhooks da conta (mensagens, comentários). Devolve aviso legível quando falha. */
+  subscribe(env: Env, auth: StoredAuth, accounts: NChannelAccount[]): Promise<string | null>;
 }
 
 export class PlatformError extends Error {
