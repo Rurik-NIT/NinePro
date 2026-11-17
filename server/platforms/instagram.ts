@@ -105,6 +105,9 @@ export const igSendText = (env: Env, token: string, igId: string, to: string, te
 export const igSendImage = (env: Env, token: string, igId: string, to: string, url: string) => igSendDm(env, token, igId, { id: to }, { attachment: { type: "image", payload: { url } } });
 /** Resposta privada: manda DM para quem comentou (até 7 dias depois do comentário). */
 export const igPrivateReply = (env: Env, token: string, igId: string, commentId: string, text: string) => igSendDm(env, token, igId, { comment_id: commentId }, { text });
+/** Resposta privada com botão de link (modelo de botão do Instagram: texto até 640, rótulo até 20 caracteres). */
+export const igPrivateReplyButton = (env: Env, token: string, igId: string, commentId: string, text: string, button: { label: string; url: string }) =>
+  igSendDm(env, token, igId, { comment_id: commentId }, { attachment: { type: "template", payload: { template_type: "button", text: text.slice(0, 640), buttons: [{ type: "web_url", url: button.url, title: button.label.slice(0, 20) }] } } });
 
 export async function igProfile(env: Env, token: string, igsid: string): Promise<{ name?: string; username?: string; profile_pic?: string }> {
   return call(`${ig(env)}/${igsid}?${new URLSearchParams({ fields: "name,username,profile_pic" })}`, { headers: bearer(token) }).catch(() => ({}));

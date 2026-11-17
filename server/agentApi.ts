@@ -6,7 +6,8 @@
  * A chave de API define o espaço de trabalho e a permissão (leitura ou leitura e escrita).
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { runTool, ToolError, TOOLS, type ToolCtx } from "./agentTools.js";
+import { allowed, runTool, ToolError, TOOLS, type ToolCtx } from "./agentTools.js";
+import { ALL_SCOPES, originOf } from "./oauth.js";
 
 type Env = Record<string, string | undefined>;
 type Json = Record<string, unknown>;
@@ -30,14 +31,24 @@ function service(env: Env): SupabaseClient | null {
 interface KeyAuth { ctx: ToolCtx; keyId: string; keyName: string }
 async function authenticate(req: Request, sb: SupabaseClient, env: Env): Promise<KeyAuth | Response> {
   const raw = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim() || (req.headers.get("x-api-key") ?? "").trim();
-  if (!raw) return fail(401, "Envie a chave de API no cabeçalho Authorization: Bearer np_live_…");
+  if (!raw) return fail(401, "Envie a chave de API no cabeçalho Authorization: Bearer np_live_… ou conecte pelo OAuth.");
+  if (raw.startsWith("npo_at_")) {
+    const { data: t, error: te } = await sb.from("oauth_tokens").select("id, workspace_id, client_name, scopes, access_expires_at, revoked_at, last_used_at").eq("access_hash", await sha256Hex(raw)).maybeSingle();
+    if (te) return fail(500, te.message);
+    if (!t || t.revoked_at) return fail(401, "Token inválido ou conexão desfeita. Conecte o NinePro de novo.");
+    if (Date.parse(t.access_expires_at as string) < Date.now()) return fail(401, "Token expirado. Renove com o refresh token.");
+    if (!t.last_used_at || Date.now() - Date.parse(t.last_used_at as string) > 60_000) await sb.from("oauth_tokens").update({ last_used_at: new Date().toISOString() }).eq("id", t.id);
+    const scopes = t.scopes as string[];
+    return { ctx: { sb, ws: t.workspace_id as string, canWrite: scopes.some((s) => s !== "leitura"), scopes, env }, keyId: t.id as string, keyName: `${t.client_name as string} (OAuth)` };
+  }
   if (!/^np_live_[0-9a-f]{20,}$/.test(raw)) return fail(401, "Chave de API inválida.");
   const { data, error } = await sb.from("api_keys").select("id, name, workspace_id, permission, revoked_at").eq("key_hash", await sha256Hex(raw)).maybeSingle();
   if (error) return fail(500, error.message);
   if (!data) return fail(401, "Chave de API inválida.");
   if (data.revoked_at) return fail(401, "Esta chave foi revogada.");
   await sb.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", data.id);
-  return { ctx: { sb, ws: data.workspace_id as string, canWrite: data.permission === "Leitura e escrita", env }, keyId: data.id as string, keyName: data.name as string };
+  const canWrite = data.permission === "Leitura e escrita";
+  return { ctx: { sb, ws: data.workspace_id as string, canWrite, scopes: canWrite ? ALL_SCOPES : ["leitura"], env }, keyId: data.id as string, keyName: data.name as string };
 }
 
 async function logRequest(sb: SupabaseClient, ws: string, keyName: string, activity: string, status: number, started: number) {
@@ -71,6 +82,12 @@ export const ROUTES: Route[] = [
   { method: "GET", path: "/instagram/comentarios", tool: "listar_comentarios", summary: "Listar comentários e menções" },
   { method: "POST", path: "/instagram/comentarios/{comentario_id}/respostas", tool: "responder_comentario", summary: "Responder comentário" },
   { method: "POST", path: "/instagram/publicacoes", tool: "publicar_instagram", summary: "Publicar ou agendar no Instagram" },
+  { method: "GET", path: "/conexoes", tool: "listar_contas_conectadas", summary: "Listar contas conectadas e a saúde de cada uma" },
+  { method: "GET", path: "/instagram/analises", tool: "analisar_publicacoes", summary: "Analisar o desempenho das publicações do Instagram" },
+  { method: "GET", path: "/publicacoes", tool: "listar_publicacoes", summary: "Listar publicações do NinePro" },
+  { method: "GET", path: "/automacoes", tool: "listar_automacoes", summary: "Listar automações de mensagens" },
+  { method: "POST", path: "/automacoes/comentario", tool: "criar_automacao_comentario", summary: "Criar automação comentário → DM (com botão de link)" },
+  { method: "PATCH", path: "/automacoes/{automacao_id}", tool: "alterar_automacao", summary: "Ligar, pausar ou excluir automação" },
 ];
 
 function matchRoute(method: string, path: string) {
@@ -180,7 +197,9 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
   const auth = await authenticate(req, sb, env);
   if (auth instanceof Response) {
     const body = (await auth.json()) as { erro: string };
-    return json(401, rpcErr(null, -32001, body.erro), { "www-authenticate": 'Bearer realm="NinePro"' });
+    const meta = `${originOf(req, env)}/.well-known/oauth-protected-resource`;
+    const hasToken = !!(req.headers.get("authorization") ?? req.headers.get("x-api-key"));
+    return json(401, rpcErr(null, -32001, body.erro), { "www-authenticate": `Bearer realm="NinePro", resource_metadata="${meta}"${hasToken ? ', error="invalid_token"' : ""}` });
   }
   let payload: RpcReq | RpcReq[];
   try { payload = (await req.json()) as RpcReq | RpcReq[]; } catch { return json(400, rpcErr(null, -32700, "JSON inválido.")); }
@@ -204,12 +223,12 @@ async function mcpOne(msg: RpcReq, auth: KeyAuth) {
         protocolVersion: MCP_VERSIONS.includes(asked) ? asked : MCP_VERSIONS[0],
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: "ninepro", title: "NinePro", version: "1.0.0" },
-        instructions: "Ferramentas do NinePro para gestão de tráfego pago e atendimento: leia desempenho, campanhas, leads e conversões; aja em leads, campanhas, públicos e regras; leia e responda conversas do WhatsApp e do Instagram, envie modelos do WhatsApp, responda comentários e publique no Instagram. Valores em reais (BRL). Tudo é restrito ao espaço de trabalho da chave." + (auth.ctx.canWrite ? "" : " Esta chave é somente leitura."),
+        instructions: "Ferramentas do NinePro para gestão de tráfego pago e atendimento: leia desempenho, campanhas, leads e conversões; aja em leads, campanhas, públicos e regras; leia e responda conversas do WhatsApp e do Instagram, envie modelos do WhatsApp, responda comentários e publique no Instagram. Valores em reais (BRL). Também lê a análise das publicações (alcance, visualizações, curtidas, salvamentos) e cria automações de comentário → DM com botão de link. Antes de publicar ou criar automações, mostre à pessoa um resumo (contas, legenda, palavra-chave, DM exata) e peça aprovação. Tudo é restrito ao espaço de trabalho conectado." + (auth.ctx.canWrite ? ` Permissões: ${(auth.ctx.scopes ?? []).join(", ")}.` : " Acesso somente leitura."),
       });
     }
     case "ping": return rpcOk(msg.id, {});
     case "tools/list":
-      return rpcOk(msg.id, { tools: TOOLS.filter((t) => auth.ctx.canWrite || !t.write).map((t) => ({ name: t.name, title: t.title, description: t.description, inputSchema: t.input, annotations: { title: t.title, readOnlyHint: !t.write, destructiveHint: false, openWorldHint: false } })) });
+      return rpcOk(msg.id, { tools: TOOLS.filter((t) => allowed(auth.ctx, t)).map((t) => ({ name: t.name, title: t.title, description: t.description, inputSchema: t.input, annotations: { title: t.title, readOnlyHint: !t.write, destructiveHint: false, openWorldHint: false } })) });
     case "tools/call": {
       const name = String(msg.params?.name ?? "");
       let status = 200;

@@ -5,11 +5,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dispatchEvent } from "./webhooks.js";
 import { applyCampaignStatus } from "./connections.js";
-import { replyComment, savePost, sendTemplate, sendToConversation } from "./channels.js";
+import { refreshMediaStats, replyComment, savePost, sendTemplate, sendToConversation } from "./channels.js";
 import { PlatformError } from "./platforms/types.js";
 import { registerConversion } from "./ingest.js";
 
-export interface ToolCtx { sb: SupabaseClient; ws: string; canWrite: boolean; env: Record<string, string | undefined> }
+export interface ToolCtx { sb: SupabaseClient; ws: string; canWrite: boolean; scopes?: string[]; env: Record<string, string | undefined> }
 type Json = Record<string, unknown>;
 type Schema = { type: "object"; properties: Record<string, Json>; required?: string[]; additionalProperties?: boolean };
 export interface Tool { name: string; title: string; description: string; write: boolean; input: Schema; run: (ctx: ToolCtx, args: Json) => Promise<unknown> }
@@ -394,13 +394,166 @@ export const TOOLS: Tool[] = [
     }, required: ["contas", "midias"], additionalProperties: false },
     run: async (ctx, a) => channel(() => savePost({ sb: ctx.sb, env: ctx.env, ws: ctx.ws, userId: null }, { content: str(a.legenda, 2200), accountIds: a.contas, mediaUrls: a.midias, mediaType: a.tipo, scheduledAt: a.agendar_para, mode: a.agendar_para ? "agendar" : "agora" })),
   },
+  /* ---------------------------------------------------------------- contas, análises e automações (agente gestor de redes sociais) */
+  {
+    name: "listar_contas_conectadas", title: "Listar contas conectadas", write: false,
+    description: "Todas as contas do espaço: plataformas de anúncio (Meta, Google, TikTok, LinkedIn) e canais (WhatsApp, Instagram), com status da conexão e da saúde. Use para conferir o que está conectado antes de agir.",
+    input: { type: "object", properties: {}, additionalProperties: false },
+    run: async (ctx) => {
+      const [ws, conns, ads, chans] = await Promise.all([
+        q<Json | null>(ctx.sb.from("workspaces").select("id, name").eq("id", ctx.ws).maybeSingle()),
+        q<Json[]>(ctx.sb.from("platform_connections").select("id, platform, external_user_name, status, last_error, last_synced_at, token_expires_at").eq("workspace_id", ctx.ws)),
+        q<Json[]>(ctx.sb.from("ad_accounts").select("id, platform, name, external_id, currency, status, last_synced_at").eq("workspace_id", ctx.ws).order("platform")),
+        q<Json[]>(ctx.sb.from("channel_accounts").select("id, kind, name, display_name, status, quality, enabled, connection_id").eq("workspace_id", ctx.ws).order("kind")),
+      ]);
+      const health = (status: unknown, err: unknown) => (status === "ativa" ? (err ? "atenção" : "saudável") : "reconectar");
+      return {
+        perfil: ws?.name ?? null,
+        conexoes: conns.map((c) => ({ plataforma: c.platform, conta: c.external_user_name, status: c.status, saude: health(c.status, c.last_error), aviso: c.last_error, sincronizada_em: c.last_synced_at, token_expira_em: c.token_expires_at })),
+        contas_de_anuncio: ads.map((a) => ({ id: a.id, plataforma: a.platform, nome: a.name, id_externo: a.external_id, moeda: a.currency, status: a.status, sincronizada_em: a.last_synced_at })),
+        canais: chans.map((c) => ({ id: c.id, tipo: c.kind === "whatsapp" ? "WhatsApp" : "Instagram", nome: c.display_name || c.name, usuario: c.name, status: c.status, qualidade: c.quality, ligado: c.enabled, saude: c.status === "ativo" && c.enabled !== false ? "saudável" : "reconectar" })),
+      };
+    },
+  },
+  {
+    name: "analisar_publicacoes", title: "Analisar publicações do Instagram", write: false,
+    description: "Desempenho das publicações do Instagram no período: totais, médias, o que funciona por formato (reels, imagem, carrossel), por dia da semana e horário (Brasília), e as melhores e piores publicações com legenda e link. Use para decidir o que publicar em seguida.",
+    input: { type: "object", properties: {
+      dias: { type: "integer", minimum: 1, maximum: 365, default: 90, description: "Janela em dias até hoje." },
+      conta_id: { type: "string", format: "uuid", description: "Uma conta do Instagram (listar_contas_conectadas). Vazio = todas." },
+      ordenar_por: { type: "string", enum: ["engajamento", "alcance", "visualizacoes", "curtidas", "comentarios", "salvamentos", "compartilhamentos"], default: "engajamento" },
+      limite: { type: "integer", minimum: 1, maximum: 50, default: 10 },
+      atualizar: { type: "boolean", default: false, description: "Busca os números mais recentes no Instagram antes de analisar (mais lento)." },
+    }, additionalProperties: false },
+    run: async (ctx, a) => {
+      const contaId = a.conta_id ? needUuid(a.conta_id, "conta_id") : undefined;
+      const atualizadas = a.atualizar === true ? await refreshMediaStats(ctx.sb, ctx.env, ctx.ws, contaId) : undefined;
+      const periodo = int(a.dias, 90, 1, 365);
+      const since = new Date(Date.now() - periodo * DAY).toISOString();
+      let mq = ctx.sb.from("social_media_stats").select("channel_account_id, media_id, caption, permalink, media_type, posted_at, likes, comments, reach, views, saved, shares").eq("workspace_id", ctx.ws).gte("posted_at", since).order("posted_at", { ascending: false }).limit(1000);
+      if (contaId) mq = mq.eq("channel_account_id", contaId);
+      const rows = await q<Json[]>(mq);
+      const n = (v: unknown) => Number(v ?? 0) || 0;
+      type Item = { midia_id: string; formato: string; publicada_em: string | null; legenda: string; link: unknown; curtidas: number; comentarios: number; alcance: number | null; visualizacoes: number | null; salvamentos: number | null; compartilhamentos: number | null; engajamento: number; taxa_engajamento: number | null };
+      type NumKey = "curtidas" | "comentarios" | "alcance" | "visualizacoes" | "salvamentos" | "compartilhamentos" | "engajamento";
+      const items: Item[] = rows.map((r) => {
+        const eng = n(r.likes) + n(r.comments) + n(r.saved) + n(r.shares);
+        return { midia_id: String(r.media_id), formato: String(r.media_type ?? "—"), publicada_em: (r.posted_at as string | null) ?? null, legenda: String(r.caption ?? "").slice(0, 280), link: r.permalink, curtidas: n(r.likes), comentarios: n(r.comments), alcance: r.reach == null ? null : n(r.reach), visualizacoes: r.views == null ? null : n(r.views), salvamentos: r.saved == null ? null : n(r.saved), compartilhamentos: r.shares == null ? null : n(r.shares), engajamento: eng, taxa_engajamento: n(r.reach) ? round((eng / n(r.reach)) * 100, 2) : null };
+      });
+      if (!items.length) return { publicacoes: 0, aviso: "Nenhuma publicação com estatísticas no período. Confira se o Instagram está conectado (listar_contas_conectadas) ou use atualizar=true.", atualizadas };
+      const keys: Record<string, NumKey> = { engajamento: "engajamento", alcance: "alcance", visualizacoes: "visualizacoes", curtidas: "curtidas", comentarios: "comentarios", salvamentos: "salvamentos", compartilhamentos: "compartilhamentos" };
+      const key = keys[str(a.ordenar_por, 30)] ?? "engajamento";
+      const sorted = [...items].sort((x, y) => n(y[key]) - n(x[key]));
+      const sum = (k: NumKey) => items.reduce((acc, it) => acc + n(it[k]), 0);
+      const avg = (list: Item[], k: NumKey) => (list.length ? round(list.reduce((acc, it) => acc + n(it[k]), 0) / list.length, 1) : 0);
+      const group = (fn: (it: Item) => string) => {
+        const m = new Map<string, Item[]>();
+        for (const it of items) { const g = fn(it); m.set(g, [...(m.get(g) ?? []), it]); }
+        return [...m.entries()].map(([g, list]) => ({ grupo: g, publicacoes: list.length, engajamento_medio: avg(list, "engajamento"), alcance_medio: avg(list, "alcance"), visualizacoes_medias: avg(list, "visualizacoes") })).sort((x, y) => y.engajamento_medio - x.engajamento_medio);
+      };
+      const local = (iso: string, opt: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", ...opt }).format(new Date(iso));
+      const limite = int(a.limite, 10, 1, 50);
+      return {
+        periodo_dias: periodo, publicacoes: items.length, atualizadas,
+        totais: { curtidas: sum("curtidas"), comentarios: sum("comentarios"), alcance: sum("alcance"), visualizacoes: sum("visualizacoes"), salvamentos: sum("salvamentos"), compartilhamentos: sum("compartilhamentos"), engajamento: sum("engajamento") },
+        medias_por_publicacao: { engajamento: avg(items, "engajamento"), alcance: avg(items, "alcance"), visualizacoes: avg(items, "visualizacoes"), curtidas: avg(items, "curtidas"), comentarios: avg(items, "comentarios") },
+        por_formato: group((it) => it.formato),
+        por_dia_da_semana: group((it) => (it.publicada_em ? local(it.publicada_em, { weekday: "long" }) : "—")),
+        por_horario: group((it) => (it.publicada_em ? `${local(it.publicada_em, { hour: "2-digit", hourCycle: "h23" })}h` : "—")).slice(0, 8),
+        melhores: sorted.slice(0, limite),
+        piores: sorted.length > limite ? sorted.slice(-Math.min(5, sorted.length - limite)).reverse() : [],
+      };
+    },
+  },
+  {
+    name: "listar_publicacoes", title: "Listar publicações do NinePro", write: false,
+    description: "Publicações criadas pelo NinePro (rascunho, agendada, publicada, falhou), com o ID da mídia e o link de cada conta quando publicada.",
+    input: { type: "object", properties: { status: { type: "string", enum: ["rascunho", "agendada", "publicada", "falhou"] }, limite: { type: "integer", minimum: 1, maximum: 100, default: 20 } }, additionalProperties: false },
+    run: async (ctx, a) => {
+      let pq = ctx.sb.from("posts").select("id, content, status, media_type, media_urls, scheduled_at, published_at, result, error, created_at").eq("workspace_id", ctx.ws).order("created_at", { ascending: false }).limit(int(a.limite, 20, 1, 100));
+      const st = oneOf(a.status, ["rascunho", "agendada", "publicada", "falhou"], "status", true); if (st) pq = pq.eq("status", st);
+      const rows = await q<Json[]>(pq);
+      return { publicacoes: rows.map((p) => ({ id: p.id, status: p.status, legenda: String(p.content ?? "").slice(0, 400), formato: p.media_type, midias: p.media_urls, agendada_para: p.scheduled_at, publicada_em: p.published_at, erro: p.error, contas: Object.values((p.result ?? {}) as Record<string, Json>).map((r) => ({ conta: r.conta, midia_id: r.id ?? null, link: r.permalink ?? null, erro: r.erro ?? null })) })) };
+    },
+  },
+  {
+    name: "criar_automacao_comentario", title: "Criar automação comentário → DM", write: true,
+    description: "Quem comentar a palavra-chave numa publicação do Instagram recebe na hora uma mensagem direta (com botão de link opcional) e, se quiser, uma resposta pública no comentário. Ex.: 'Comente GUIA para receber o material'. Mostre à pessoa a palavra-chave, a resposta pública e a DM exata e peça aprovação antes de criar.",
+    input: { type: "object", properties: {
+      nome: { type: "string", maxLength: 120 },
+      palavras_chave: { type: "array", items: { type: "string", maxLength: 60 }, maxItems: 20, description: "Ex.: [\"GUIA\"]. Sem diferenciar maiúsculas nem acentos. Vazio = qualquer comentário." },
+      correspondencia: { type: "string", enum: ["contem", "exata"], default: "contem", description: "contem: o comentário contém a palavra; exata: o comentário é só a palavra." },
+      mensagem_dm: { type: "string", minLength: 1, maxLength: 640, description: "Texto da DM. Aceita {{nome}}." },
+      botao_texto: { type: "string", maxLength: 20, description: "Rótulo do botão (até 20 caracteres), ex.: 'Pegar o guia'." },
+      botao_url: { type: "string", description: "Link https aberto pelo botão." },
+      resposta_publica: { type: "string", maxLength: 300, description: "Resposta no comentário, ex.: 'Te mandei no direct!'. Opcional." },
+      publicacao_id: { type: "string", format: "uuid", description: "Publicação feita pelo NinePro (publicar_instagram ou listar_publicacoes). Vale também para publicação agendada." },
+      midia_ids: { type: "array", items: { type: "string" }, maxItems: 20, description: "IDs de mídia do Instagram (analisar_publicacoes). Sem publicacao_id e sem midia_ids = todas as publicações." },
+      uma_vez_por_pessoa: { type: "boolean", default: true },
+      ativa: { type: "boolean", default: true },
+    }, required: ["mensagem_dm"], additionalProperties: false },
+    run: async (ctx, a) => {
+      const keywords = (Array.isArray(a.palavras_chave) ? a.palavras_chave : []).map((k) => str(k, 60)).filter(Boolean).slice(0, 20);
+      const dm = str(a.mensagem_dm, 640);
+      if (!dm) throw new ToolError(400, "Escreva a mensagem da DM.");
+      const label = str(a.botao_texto, 20), url = str(a.botao_url, 1000);
+      if (!!label !== !!url) throw new ToolError(400, "Para ter botão, informe botao_texto e botao_url juntos.");
+      if (url && !/^https:\/\/[^\s/]+\.[^\s]+/.test(url)) throw new ToolError(400, "botao_url precisa ser um link https público.");
+      const postId = a.publicacao_id ? needUuid(a.publicacao_id, "publicacao_id") : null;
+      if (postId && !(await q<Json | null>(ctx.sb.from("posts").select("id").eq("workspace_id", ctx.ws).eq("id", postId).maybeSingle()))) throw new ToolError(404, "Publicação não encontrada neste espaço.");
+      const mediaIds = (Array.isArray(a.midia_ids) ? a.midia_ids : []).map((m) => str(m, 60)).filter((m) => /^\d{5,}$/.test(m));
+      const ig = await q<Json[]>(ctx.sb.from("channel_accounts").select("id").eq("workspace_id", ctx.ws).eq("kind", "instagram"));
+      if (!ig.length) throw new ToolError(400, "Conecte uma conta do Instagram antes de criar a automação.");
+      const row = {
+        workspace_id: ctx.ws, name: str(a.nome, 120) || `Comentário ${keywords[0] ?? "qualquer"} → DM`, status: a.ativa === false ? "pausado" : "ativo", trigger: "comentario", channel: "Instagram",
+        match: keywords.length ? (a.correspondencia === "exata" ? "exata" : "contem") : "qualquer", keywords, reply: dm, comment_reply: str(a.resposta_publica, 300),
+        button_label: label || null, button_url: url || null, media_ids: mediaIds, post_id: postId, once_per_user: a.uma_vez_por_pessoa !== false, source: "agente",
+      };
+      const saved = await q<Json>(ctx.sb.from("inbox_flows").insert(row).select("id, name, status").single());
+      const quem = keywords.length ? keywords.map((k) => `“${k}”`).join(" ou ") : "qualquer coisa";
+      return { automacao: saved, como_funciona: `Quem comentar ${quem} ${postId || mediaIds.length ? "na publicação escolhida" : "em qualquer publicação"} recebe a DM${label ? ` com o botão “${label}”` : ""}${row.comment_reply ? " e uma resposta pública" : ""}${row.once_per_user ? ", uma vez por pessoa" : ""}.` };
+    },
+  },
+  {
+    name: "listar_automacoes", title: "Listar automações de mensagens", write: false,
+    description: "Automações de comentário → DM e respostas automáticas, com quantas vezes cada uma disparou.",
+    input: { type: "object", properties: {}, additionalProperties: false },
+    run: async (ctx) => {
+      const rows = await q<Json[]>(ctx.sb.from("inbox_flows").select("id, name, status, trigger, channel, match, keywords, reply, comment_reply, button_label, button_url, media_ids, post_id, once_per_user, runs, last_run_at, source").eq("workspace_id", ctx.ws).order("created_at", { ascending: false }));
+      return { automacoes: rows.map((f) => ({ id: f.id, nome: f.name, status: f.status, gatilho: f.trigger, canal: f.channel, palavras_chave: f.keywords, correspondencia: f.match, mensagem: f.reply, resposta_publica: f.comment_reply || null, botao: f.button_label ? { texto: f.button_label, url: f.button_url } : null, publicacao_id: f.post_id, midia_ids: f.media_ids, uma_vez_por_pessoa: f.once_per_user, disparos: f.runs, ultimo_disparo: f.last_run_at, criada_por: f.source === "agente" ? "agente" : "app" })) };
+    },
+  },
+  {
+    name: "alterar_automacao", title: "Ligar, pausar ou excluir automação", write: true,
+    description: "Liga, pausa ou exclui uma automação de mensagens.",
+    input: { type: "object", properties: { automacao_id: { type: "string", format: "uuid" }, acao: { type: "string", enum: ["ativar", "pausar", "excluir"] } }, required: ["automacao_id", "acao"], additionalProperties: false },
+    run: async (ctx, a) => {
+      const id = needUuid(a.automacao_id, "automacao_id");
+      const acao = oneOf(a.acao, ["ativar", "pausar", "excluir"], "acao");
+      const found = await q<Json | null>(ctx.sb.from("inbox_flows").select("id, name").eq("workspace_id", ctx.ws).eq("id", id).maybeSingle());
+      if (!found) throw new ToolError(404, "Automação não encontrada neste espaço.");
+      if (acao === "excluir") { await q(ctx.sb.from("inbox_flows").delete().eq("id", id)); return { ok: true, excluida: found.name }; }
+      return { automacao: await q<Json>(ctx.sb.from("inbox_flows").update({ status: acao === "ativar" ? "ativo" : "pausado", updated_at: new Date().toISOString() }).eq("id", id).select("id, name, status").single()) };
+    },
+  },
 ];
+
+/** Permissão (escopo OAuth) exigida por cada ferramenta de escrita; as de leitura exigem "leitura". */
+const WRITE_SCOPE: Record<string, string> = {
+  alterar_status_campanha: "anuncios", criar_publico: "anuncios", criar_regra: "anuncios", ativar_regra: "anuncios",
+  criar_lead: "crm", atualizar_status_lead: "crm", registrar_conversao: "crm",
+  responder_conversa: "mensagens", enviar_modelo_whatsapp: "mensagens", responder_comentario: "mensagens",
+  publicar_instagram: "publicacoes",
+  criar_automacao_comentario: "automacoes", alterar_automacao: "automacoes",
+};
+export const scopeOf = (t: Tool) => (t.write ? WRITE_SCOPE[t.name] ?? "escrita" : "leitura");
+export const allowed = (ctx: ToolCtx, t: Tool) => (ctx.scopes ? ctx.scopes.includes(scopeOf(t)) : ctx.canWrite || !t.write);
 
 export const TOOL_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 
 export async function runTool(ctx: ToolCtx, name: string, args: Json) {
   const tool = TOOL_BY_NAME.get(name);
   if (!tool) throw new ToolError(404, `Ferramenta desconhecida: ${name}.`);
-  if (tool.write && !ctx.canWrite) throw new ToolError(403, "Esta chave é somente leitura.");
+  if (!allowed(ctx, tool)) throw new ToolError(403, ctx.scopes && tool.write ? `Sem permissão para esta ação (precisa de “${scopeOf(tool)}”). Conecte de novo liberando essa permissão.` : "Esta chave é somente leitura.");
   return tool.run(ctx, args ?? {});
 }

@@ -17,6 +17,10 @@ const API_ROUTES: { prefix: string; module: string; fn: string }[] = [
   { prefix: "/api/eventos", module: "/server/ingest.ts", fn: "handleIngest" },
   { prefix: "/api/regras", module: "/server/rules.ts", fn: "handleRules" },
   { prefix: "/api/mcp", module: "/server/agentApi.ts", fn: "handleMcp" },
+  { prefix: "/api/oauth", module: "/server/oauth.ts", fn: "handleOauth" },
+  { prefix: "/.well-known/oauth-protected-resource", module: "/server/oauth.ts", fn: "handleOauth" },
+  { prefix: "/.well-known/oauth-authorization-server", module: "/server/oauth.ts", fn: "handleOauth" },
+  { prefix: "/.well-known/openid-configuration", module: "/server/oauth.ts", fn: "handleOauth" },
   { prefix: "/api/v1", module: "/server/agentApi.ts", fn: "handleRest" },
 ];
 function apiDev(env: Record<string, string>): Plugin {

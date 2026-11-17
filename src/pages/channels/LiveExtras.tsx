@@ -26,10 +26,10 @@ const shortDay = (k: string) => `${k.slice(8, 10)}/${k.slice(5, 7)}`;
 const lastDays = (n: number) => Array.from({ length: n }, (_, i) => dayKey(new Date(Date.now() - (n - 1 - i) * DAY)));
 
 /* ------------------------------------------------------------------ Fluxos (respostas automáticas) */
-interface Flow { id: string; name: string; status: "ativo" | "pausado"; trigger: "mensagem" | "primeira_mensagem" | "comentario" | "fora_do_horario"; channel: "todos" | "WhatsApp" | "Instagram"; match: "qualquer" | "contem" | "exata"; keywords: string[]; reply: string; comment_reply: string; hours: { start: string; end: string; days: number[] }; runs: number; last_run_at: string | null }
+interface Flow { id: string; name: string; status: "ativo" | "pausado"; trigger: "mensagem" | "primeira_mensagem" | "comentario" | "fora_do_horario"; channel: "todos" | "WhatsApp" | "Instagram"; match: "qualquer" | "contem" | "exata"; keywords: string[]; reply: string; comment_reply: string; hours: { start: string; end: string; days: number[] }; runs: number; last_run_at: string | null; button_label: string | null; button_url: string | null; media_ids: string[]; post_id: string | null; once_per_user: boolean; source?: string }
 const TRIGGER_LABEL: Record<Flow["trigger"], string> = { mensagem: "Mensagem recebida", primeira_mensagem: "Primeira mensagem do contato", comentario: "Comentário no Instagram", fora_do_horario: "Mensagem fora do horário" };
 const WEEK = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
-const blankFlow = (): Omit<Flow, "id" | "runs" | "last_run_at"> => ({ name: "", status: "ativo", trigger: "primeira_mensagem", channel: "todos", match: "qualquer", keywords: [], reply: "", comment_reply: "", hours: { start: "09:00", end: "18:00", days: [1, 2, 3, 4, 5] } });
+const blankFlow = (): Omit<Flow, "id" | "runs" | "last_run_at"> => ({ name: "", status: "ativo", trigger: "primeira_mensagem", channel: "todos", match: "qualquer", keywords: [], reply: "", comment_reply: "", hours: { start: "09:00", end: "18:00", days: [1, 2, 3, 4, 5] }, button_label: null, button_url: null, media_ids: [], post_id: null, once_per_user: true });
 
 export function LiveFlows() {
   const toast = useToast();
@@ -39,8 +39,8 @@ export function LiveFlows() {
   const [removing, setRemoving] = useState<Flow | null>(null);
   const load = useCallback(async () => {
     if (!supabase || !ws) return;
-    const { data } = await supabase.from("inbox_flows").select("id, name, status, trigger, channel, match, keywords, reply, comment_reply, hours, runs, last_run_at").eq("workspace_id", ws).order("created_at");
-    setRows((data as Flow[] | null) ?? []);
+    const { data } = await supabase.from("inbox_flows").select("*").eq("workspace_id", ws).order("created_at");
+    setRows(((data as Flow[] | null) ?? []).map((f) => ({ ...f, media_ids: f.media_ids ?? [], once_per_user: f.once_per_user ?? true })));
   }, [ws]);
   useEffect(() => { void load(); }, [load]);
   if (accounts === null || rows === null) return <Page><PageHeader title="Fluxos" /><LoadingState /></Page>;
@@ -51,7 +51,7 @@ export function LiveFlows() {
         actions={admin ? <Button variant="primary" icon={<Plus />} onClick={() => setEditing("novo")}>Novo fluxo</Button> : undefined}
         before={!accounts.length ? <InlineNotice tone="info" action={<Link to="/conexoes" className={buttonClasses("outline", "sm")}>Conectar</Link>}>Os fluxos respondem pelo WhatsApp e pelo Instagram conectados. Conecte um canal para começar.</InlineNotice> : undefined}
         columns={[
-          { id: "n", header: "Fluxo", sticky: true, cell: (f) => <div className="flex max-w-[420px] flex-col gap-0.5"><span className="font-semibold">{f.name}</span><span className="line-clamp-1 whitespace-normal t-secondary">{f.reply || f.comment_reply}</span></div> },
+          { id: "n", header: "Fluxo", sticky: true, cell: (f) => <div className="flex max-w-[420px] flex-col gap-0.5"><span className="font-semibold">{f.name}</span><span className="line-clamp-1 whitespace-normal t-secondary">{f.reply || f.comment_reply}</span>{(f.button_label || f.source === "agente" || f.media_ids.length > 0 || f.post_id) && <span className="flex flex-wrap gap-1 pt-0.5">{f.button_label && <Tag>Botão: {f.button_label}</Tag>}{(f.media_ids.length > 0 || f.post_id) && <Tag>Publicação específica</Tag>}{f.source === "agente" && <Tag tone="info">Criado por agente de IA</Tag>}</span>}</div> },
           { id: "t", header: "Quando", cell: (f) => <div className="flex flex-col"><span>{TRIGGER_LABEL[f.trigger]}</span>{f.match !== "qualquer" && f.keywords.length > 0 && <span className="t-caption">{f.match === "exata" ? "Exatamente: " : "Contém: "}{f.keywords.join(", ")}</span>}{f.trigger === "fora_do_horario" && <span className="t-caption">Atende {f.hours.days.map((d) => WEEK[d]).join(", ")} · {f.hours.start}–{f.hours.end}</span>}</div> },
           { id: "c", header: "Canal", cell: (f) => <Tag>{f.trigger === "comentario" ? "Instagram" : f.channel === "todos" ? "WhatsApp e Instagram" : f.channel}</Tag> },
           { id: "r", header: "Execuções", align: "right", sortValue: (f) => f.runs, cell: (f) => <div className="flex flex-col items-end"><span className="num">{f.runs.toLocaleString("pt-BR")}</span>{f.last_run_at && <span className="t-caption">{formatDateTime(new Date(f.last_run_at))}</span>}</div> },
@@ -74,10 +74,18 @@ function FlowModal({ flow, ws, onOpenChange, onSaved }: { flow: Flow | "novo" | 
   useEffect(() => { if (!flow) return; const v = flow === "novo" ? blankFlow() : { ...flow }; setF(v); setKw(v.keywords.join(", ")); }, [flow]);
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }));
   const isComment = f.trigger === "comentario";
-  const valid = f.name.trim().length > 1 && (f.reply.trim() || (isComment && f.comment_reply.trim())) && (f.match === "qualquer" || kw.trim());
+  const [media, setMedia] = useState<{ media_id: string; caption: string | null; posted_at: string | null; media_type: string | null }[]>([]);
+  useEffect(() => {
+    if (!flow || !supabase) return;
+    supabase.from("social_media_stats").select("media_id, caption, posted_at, media_type").eq("workspace_id", ws).order("posted_at", { ascending: false }).limit(30).then(({ data }) => setMedia((data as typeof media | null) ?? []));
+  }, [flow, ws]);
+  const hasButton = !!(f.button_label?.trim() || f.button_url?.trim());
+  const buttonOk = !hasButton || (!!f.button_label?.trim() && /^https:\/\/[^\s/]+\.[^\s]+/.test(f.button_url?.trim() ?? ""));
+  const valid = f.name.trim().length > 1 && (f.reply.trim() || (isComment && f.comment_reply.trim())) && (f.match === "qualquer" || kw.trim()) && (!isComment || buttonOk);
   const save = async () => {
     setBusy(true);
-    const row = { ...f, name: f.name.trim(), keywords: f.match === "qualquer" ? [] : kw.split(",").map((k) => k.trim()).filter(Boolean), channel: isComment ? "Instagram" : f.channel, updated_at: new Date().toISOString() };
+    const row = { ...f, name: f.name.trim(), keywords: f.match === "qualquer" ? [] : kw.split(",").map((k) => k.trim()).filter(Boolean), channel: isComment ? "Instagram" : f.channel, button_label: isComment && hasButton ? f.button_label!.trim().slice(0, 20) : null, button_url: isComment && hasButton ? f.button_url!.trim() : null, media_ids: isComment ? f.media_ids : [], updated_at: new Date().toISOString() };
+    delete (row as Partial<Flow>).source;
     const { error } = flow && flow !== "novo" ? await supabase!.from("inbox_flows").update(row).eq("id", flow.id) : await supabase!.from("inbox_flows").insert({ ...row, workspace_id: ws, created_by: (await supabase!.auth.getUser()).data.user?.id });
     setBusy(false);
     if (error) { toast({ tone: "error", title: "Não foi possível salvar", description: error.message }); return; }
@@ -102,7 +110,16 @@ function FlowModal({ flow, ws, onOpenChange, onSaved }: { flow: Flow | "novo" | 
           </div>
         )}
         {isComment && <Field label="Resposta pública no comentário" hint="Opcional. Ex.: “Te mandei no direct! 💌”" className="md:col-span-2">{(p) => <Input {...p} value={f.comment_reply} onChange={(e) => set("comment_reply", e.target.value)} />}</Field>}
-        <Field label={isComment ? "Mensagem direta para quem comentou" : "Resposta"} required={!isComment} hint="Use {{nome}} ou {{primeiro_nome}} para personalizar." className="md:col-span-2">{(p) => <Textarea id={p.id} value={f.reply} onChange={(e) => set("reply", e.target.value)} rows={4} maxLength={1000} placeholder={isComment ? "Oi! Aqui está o seu cupom: PROMO10" : "Olá {{primeiro_nome}}! Recebemos sua mensagem e já vamos te responder."} />}</Field>
+        <Field label={isComment ? "Mensagem direta para quem comentou" : "Resposta"} required={!isComment} hint="Use {{nome}} ou {{primeiro_nome}} para personalizar." className="md:col-span-2">{(p) => <Textarea id={p.id} value={f.reply} onChange={(e) => set("reply", e.target.value)} rows={4} maxLength={isComment ? 640 : 1000} placeholder={isComment ? "Oi! Aqui está o seu cupom: PROMO10" : "Olá {{primeiro_nome}}! Recebemos sua mensagem e já vamos te responder."} />}</Field>
+        {isComment && (
+          <>
+            <Field label="Botão na mensagem" hint="Opcional. Até 20 caracteres, ex.: “Pegar o guia”.">{(p) => <Input {...p} value={f.button_label ?? ""} maxLength={20} onChange={(e) => set("button_label", e.target.value)} placeholder="Pegar o guia" />}</Field>
+            <Field label="Link do botão" hint={hasButton && !buttonOk ? "Use um link https completo." : "Abre ao tocar no botão."}>{(p) => <Input {...p} value={f.button_url ?? ""} onChange={(e) => set("button_url", e.target.value)} placeholder="https://seusite.com.br/material" />}</Field>
+            <Field label="Em quais publicações" className="md:col-span-2" hint={f.post_id ? "Vinculada a uma publicação feita pelo NinePro (definida pelo agente)." : undefined}>{(p) => <Select id={p.id} value={f.media_ids[0] ?? "todas"} onValueChange={(v) => set("media_ids", v === "todas" ? [] : [v])}
+              options={[{ value: "todas", label: "Todas as publicações" }, ...media.map((m) => ({ value: m.media_id, label: `${m.posted_at ? new Date(m.posted_at).toLocaleDateString("pt-BR") : ""} · ${(m.caption ?? "(sem legenda)").slice(0, 60)}` })), ...f.media_ids.filter((id) => !media.some((m) => m.media_id === id)).map((id) => ({ value: id, label: `Publicação ${id}` }))]} />}</Field>
+            <div className="md:col-span-2"><Switch checked={f.once_per_user} onCheckedChange={(v) => set("once_per_user", v)} label="Uma vez por pessoa" description="Quem já recebeu a mensagem deste fluxo não recebe de novo ao comentar outra vez." /></div>
+          </>
+        )}
         <div className="md:col-span-2"><Switch checked={f.status === "ativo"} onCheckedChange={(v) => set("status", v ? "ativo" : "pausado")} label="Ativo" description="Só o primeiro fluxo que combinar responde. A mesma conversa não recebe o mesmo fluxo de novo por 6 horas." /></div>
       </div>
     </Modal>

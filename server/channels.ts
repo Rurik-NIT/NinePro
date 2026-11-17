@@ -463,11 +463,23 @@ async function loadComment(ctx: ChannelCtx, id: string) {
   const token = tokenOf(await channelAuth(ctx.sb, ctx.env, acc.kind, acc.connection_id));
   return { c: data, acc, token };
 }
-export async function replyComment(ctx: ChannelCtx, commentId: string, text: string, privately = false) {
-  const body = text.trim();
+export async function replyComment(ctx: ChannelCtx, commentId: string, text: string, privately = false, button?: { label: string; url: string } | null) {
+  let body = text.trim();
   if (!body) throw new PlatformError("Escreva a resposta.");
   const { c, acc, token } = await loadComment(ctx, commentId);
-  if (privately) await IG.igPrivateReply(ctx.env, token, acc.external_id, c.external_id as string, body);
+  if (privately && button?.label && button.url) {
+    try { await IG.igPrivateReplyButton(ctx.env, token, acc.external_id, c.external_id as string, body, button); }
+    catch (e) {
+      if (e instanceof PlatformError && e.expired) throw e;
+      // a conta não aceita botões (ou o link foi recusado): manda o texto com o link no fim
+      body = `${body}
+
+${button.label}: ${button.url}`;
+      await IG.igPrivateReply(ctx.env, token, acc.external_id, c.external_id as string, body);
+    }
+    body = body.includes(button.url) ? body : `${body}
+[${button.label}] ${button.url}`;
+  } else if (privately) await IG.igPrivateReply(ctx.env, token, acc.external_id, c.external_id as string, body);
   else {
     const r = await IG.igReplyComment(ctx.env, token, c.external_id as string, body);
     await ctx.sb.from("social_comments").upsert(commentRow(acc, { id: r.id, parent: c.external_id as string, text: body, username: acc.name.replace(/^@/, ""), fromId: acc.external_id, mediaId: c.media_id as string, caption: c.media_caption as string, permalink: c.media_permalink as string, thumb: c.media_thumbnail as string }), { onConflict: "channel_account_id,external_id" });
@@ -649,7 +661,7 @@ export async function handlePublishDue(req: Request, env: Env): Promise<Response
 export { isChannel };
 
 /* ------------------------------------------------------------------ fluxos (respostas automáticas) */
-interface Flow { id: string; trigger: string; channel: string; match: string; keywords: string[]; reply: string; comment_reply: string; hours: { start?: string; end?: string; days?: number[] }; runs: number }
+interface Flow { id: string; trigger: string; channel: string; match: string; keywords: string[]; reply: string; comment_reply: string; hours: { start?: string; end?: string; days?: number[] }; runs: number; button_label?: string | null; button_url?: string | null; media_ids?: string[]; post_id?: string | null; once_per_user?: boolean }
 const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim();
 const matches = (f: Flow, text: string) => {
   if (f.match === "qualquer" || !f.keywords.length) return true;
@@ -692,15 +704,39 @@ async function runMessageFlows(sb: SupabaseClient, env: Env, acc: Account, convI
 
 async function runCommentFlows(sb: SupabaseClient, env: Env, acc: Account, commentExternalId: string, text: string) {
   if (acc.kind !== "instagram") return;
-  const { data: flows } = await sb.from("inbox_flows").select("id, trigger, channel, match, keywords, reply, comment_reply, hours, runs").eq("workspace_id", acc.workspace_id).eq("status", "ativo").eq("trigger", "comentario").order("created_at");
-  const f = ((flows ?? []) as Flow[]).find((x) => (x.channel === "todos" || x.channel === "Instagram") && matches(x, text) && (x.reply.trim() || x.comment_reply.trim()));
+  const { data: flows } = await sb.from("inbox_flows").select("id, trigger, channel, match, keywords, reply, comment_reply, hours, runs, button_label, button_url, media_ids, post_id, once_per_user").eq("workspace_id", acc.workspace_id).eq("status", "ativo").eq("trigger", "comentario").order("created_at");
+  if (!flows?.length) return;
+  const { data: c } = await sb.from("social_comments").select("id, author_id, author_username, media_id, flow_id").eq("channel_account_id", acc.id).eq("external_id", commentExternalId).single();
+  if (!c || c.flow_id) return;
+  // publicações feitas pelo NinePro: o ID da mídia fica no resultado da publicação
+  const postIds = [...new Set((flows as Flow[]).map((f) => f.post_id).filter(Boolean))] as string[];
+  const postMedia = new Map<string, string[]>();
+  if (postIds.length) {
+    const { data: posts } = await sb.from("posts").select("id, result").in("id", postIds);
+    for (const p of posts ?? []) postMedia.set(p.id as string, Object.values((p.result ?? {}) as Record<string, { id?: string }>).map((r) => r.id ?? "").filter(Boolean));
+  }
+  const onMedia = (f: Flow) => {
+    const ids = [...(f.media_ids ?? []), ...(f.post_id ? postMedia.get(f.post_id) ?? ["—"] : [])];
+    return !ids.length || (!!c.media_id && ids.includes(c.media_id as string));
+  };
+  let f: Flow | undefined;
+  for (const x of flows as Flow[]) {
+    if (x.channel !== "todos" && x.channel !== "Instagram") continue;
+    if (!(x.reply.trim() || x.comment_reply.trim()) || !onMedia(x) || !matches(x, text)) continue;
+    if (x.once_per_user !== false && c.author_id) {
+      const { count } = await sb.from("social_comments").select("id", { count: "exact", head: true }).eq("flow_id", x.id).eq("author_id", c.author_id);
+      if ((count ?? 0) > 0) continue;
+    }
+    f = x; break;
+  }
   if (!f) return;
-  const { data: c } = await sb.from("social_comments").select("id, author_username").eq("channel_account_id", acc.id).eq("external_id", commentExternalId).single();
-  if (!c) return;
+  // marca antes de responder: reentregas do webhook não disparam duas vezes
+  const { data: claimed } = await sb.from("social_comments").update({ flow_id: f.id }).eq("id", c.id).is("flow_id", null).select("id");
+  if (!claimed?.length) return;
   const ctx: ChannelCtx = { sb, env, ws: acc.workspace_id, userId: null };
   const vars = { nome: String(c.author_username ?? ""), primeiro_nome: String(c.author_username ?? "") };
-  if (f.comment_reply.trim()) await replyComment(ctx, c.id as string, fill(f.comment_reply, vars), false);
-  if (f.reply.trim()) await replyComment(ctx, c.id as string, fill(f.reply, vars), true);
+  if (f.comment_reply.trim()) await replyComment(ctx, c.id as string, fill(f.comment_reply, vars), false).catch((e) => console.error("resposta pública:", msg(e)));
+  if (f.reply.trim()) await replyComment(ctx, c.id as string, fill(f.reply, vars), true, f.button_label && f.button_url ? { label: f.button_label, url: f.button_url } : null);
   await sb.from("inbox_flows").update({ runs: f.runs + 1, last_run_at: now() }).eq("id", f.id);
 }
 
@@ -766,6 +802,18 @@ export async function processBroadcasts(sb: SupabaseClient, env: Env, budgetMs: 
 }
 
 /* ------------------------------------------------------------------ estatísticas das publicações do Instagram */
+/** Atualiza as estatísticas das publicações das contas do Instagram do espaço (usado pelos agentes). */
+export async function refreshMediaStats(sb: SupabaseClient, env: Env, ws: string, accountId?: string) {
+  let q = sb.from("channel_accounts").select(ACCOUNT_COLS).eq("workspace_id", ws).eq("kind", "instagram").eq("status", "ativo");
+  if (accountId) q = q.eq("id", accountId);
+  const { data: accs } = await q;
+  const out: Record<string, number | string> = {};
+  for (const acc of (accs ?? []) as Account[]) {
+    try { out[acc.name] = await syncMediaStats(sb, env, tokenOf(await channelAuth(sb, env, "instagram", acc.connection_id)), acc); }
+    catch (e) { out[acc.name] = `erro: ${msg(e)}`; }
+  }
+  return out;
+}
 async function syncMediaStats(sb: SupabaseClient, env: Env, token: string, acc: Account) {
   const media = await IG.igRecentMedia(env, token, 25);
   const rows = [];

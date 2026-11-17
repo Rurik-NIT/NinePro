@@ -31,6 +31,7 @@ const DataDeletion = lazy(() => import("@/pages/legal/DataDeletion"));
 const Admin = lazy(() => import("@/pages/admin/Admin"));
 const AgentIntegration = lazy(() => import("@/pages/dev/AgentIntegration"));
 const Builder = lazy(() => import("@/pages/automations/Builder"));
+const OAuthAuthorize = lazy(() => import("@/pages/oauth/Authorize"));
 
 const conv = () => import("@/pages/ads/Conversions");
 const assets = () => import("@/pages/ads/Assets");
@@ -70,6 +71,8 @@ const router = createBrowserRouter([
   { path: "/privacidade", element: S(<Privacy />) },
   { path: "/termos", element: S(<Terms />) },
   { path: "/exclusao-de-dados", element: S(<DataDeletion />) },
+  /* Autorização de agentes de IA (OAuth): exige login, sem o menu do app */
+  { path: "/oauth/autorizar", element: <RequireAuth>{S(<OAuthAuthorize />)}</RequireAuth> },
   {
     path: "/",
     element: <RequireAuth><AppShell /></RequireAuth>,

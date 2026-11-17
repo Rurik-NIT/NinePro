@@ -8,6 +8,7 @@ import { createClient, type SupabaseClient, type User } from "@supabase/supabase
 import { randomBytes } from "node:crypto";
 import { runRule } from "./rules.js";
 import { dispatchEvent } from "./webhooks.js";
+import { approve, clientInfo, parseScopes } from "./oauth.js";
 
 type Env = Record<string, string | undefined>;
 type Json = Record<string, unknown>;
@@ -55,12 +56,35 @@ export async function handleApp(req: Request, env: Env): Promise<Response> {
     return json(200, r ?? { status: 0, error: "Nada enviado." });
   }
 
+  // Tela de autorização OAuth de agentes de IA (/oauth/autorizar)
+  if (body.action === "oauth_client") return json(200, await clientInfo(sb, str(body.clientId, 80), str(body.redirectUri, 500)));
+  if (body.action === "oauth_approve") {
+    const wsId = str(body.workspaceId, 64);
+    const r = wsId ? await roleIn(wsId) : null;
+    if (!r) return json(403, { error: "Você não faz parte deste espaço." });
+    const scopes = parseScopes(body.scopes);
+    if (r === "member" && scopes.some((s) => s !== "leitura")) return json(403, { error: "Como membro, você só pode liberar a leitura. Peça a um administrador do espaço para liberar as demais permissões." });
+    try {
+      const code = await approve(sb, me.id, { clientId: str(body.clientId, 80), redirectUri: str(body.redirectUri, 500), codeChallenge: str(body.codeChallenge, 200), method: str(body.codeChallengeMethod, 10) || "S256", scopes, workspaceId: wsId, resource: str(body.resource, 300) });
+      return json(200, { code });
+    } catch (e) { return json(400, { error: e instanceof Error ? e.message : String(e) }); }
+  }
+
   const ws = str(body.workspaceId, 64);
   const role = ws ? await roleIn(ws) : null;
   if (!role) return json(403, { error: "Você não faz parte deste espaço." });
   const isAdmin = role === "owner" || role === "admin";
 
   switch (body.action) {
+    /* ---------------------------------------------------------------- agentes conectados por OAuth */
+    case "oauth_revoke": {
+      const id = str(body.tokenId, 64);
+      const { data: t } = await sb.from("oauth_tokens").select("id, user_id").eq("id", id).eq("workspace_id", ws).maybeSingle();
+      if (!t) return json(404, { error: "Conexão não encontrada." });
+      if (!isAdmin && t.user_id !== me.id) return json(403, { error: "Só administradores ou quem conectou podem desconectar." });
+      await sb.from("oauth_tokens").update({ revoked_at: new Date().toISOString() }).eq("id", id);
+      return json(200, { ok: true });
+    }
     /* ---------------------------------------------------------------- equipe */
     case "team_list": {
       const { data: members } = await sb.from("workspace_members").select("user_id, role, created_at").eq("workspace_id", ws);
