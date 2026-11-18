@@ -46,6 +46,7 @@ const liveInbox = () => import("@/pages/channels/LiveInbox");
 const liveSocial = () => import("@/pages/channels/LiveSocial");
 const liveExtras = () => import("@/pages/channels/LiveExtras");
 const liveWs = () => import("@/pages/live/LiveWorkspace");
+const liveQueues = () => import("@/pages/channels/LiveQueues");
 const LiveRules = lazy(() => import("@/pages/automations/LiveRules"));
 const LiveComments = lazy(() => import("@/pages/channels/LiveInbox").then((m) => ({ default: () => <m.LiveInboxComments kind="comment" /> })));
 const LiveMentions = lazy(() => import("@/pages/channels/LiveInbox").then((m) => ({ default: () => <m.LiveInboxComments kind="mention" /> })));
@@ -84,7 +85,7 @@ const router = createBrowserRouter([
       { path: "conexoes", element: S(<Connections />) },
 
       { path: "publicacoes", element: L(N(liveSocial, "LivePosts"), N(posts, "PostsAll")) },
-      { path: "publicacoes/filas", element: <DemoOnly title="Filas de publicação" area="as redes sociais">{N(posts, "PostsQueues")}</DemoOnly> },
+      { path: "publicacoes/filas", element: L(N(liveQueues, "LiveQueues"), N(posts, "PostsQueues")) },
       { path: "publicacoes/hashtags", element: <Navigate to="/conexoes" replace /> },
       { path: "ao-vivo", element: <Navigate to="/conexoes" replace /> },
 
@@ -97,6 +98,7 @@ const router = createBrowserRouter([
       { path: "caixa-de-entrada/avaliacoes", element: <DemoOnly title="Avaliações" area="as redes sociais">{N(inbox, "InboxReviews")}</DemoOnly> },
       { path: "caixa-de-entrada/mencoes", element: L(S(<LiveMentions />), N(inbox, "InboxMentions")) },
       { path: "caixa-de-entrada/campanhas", element: L(N(liveExtras, "LiveBroadcasts"), N(inbox, "InboxCampaigns")) },
+      { path: "caixa-de-entrada/sequencias", element: L(N(liveQueues, "LiveSequences"), N(inbox, "InboxWorkflows")) },
       { path: "caixa-de-entrada/fluxos", element: L(N(liveExtras, "LiveFlows"), N(inbox, "InboxWorkflows")) },
       { path: "caixa-de-entrada/contatos", element: L(N(liveExtras, "LiveContacts"), N(inbox, "InboxContacts")) },
 

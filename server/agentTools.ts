@@ -9,6 +9,9 @@ import { channelLabel, checkPost, createBroadcast, publishPost, refreshMediaStat
 import { CHANNELS, PUBLISHABLE, type ChannelId } from "./platforms/index.js";
 import { listUploads, makeUploadToken, readUploadToken } from "./media.js";
 import { WEBHOOK_EVENTS } from "./events.js";
+import { cleanSlots, deleteQueue, describeSlots, freeSlots, loadQueue, QUEUE_COLS, QueueError, saveQueue, type Queue } from "./queue.js";
+import { countText, validateMedia } from "./validate.js";
+import { enroll, saveSequence, SequenceError, sequenceStats, setSequenceStatus, unenroll } from "./sequences.js";
 import { PlatformError } from "./platforms/types.js";
 import { registerConversion } from "./ingest.js";
 
@@ -20,6 +23,8 @@ export interface Tool { name: string; title: string; description: string; write:
 export class ToolError extends Error { constructor(public status: number, message: string) { super(message); } }
 
 /** Converte erros de plataforma (WhatsApp/Instagram) em erro 400 legível para o agente. */
+const queueCall = async <T>(fn: () => Promise<T>) => { try { return await fn(); } catch (e) { if (e instanceof QueueError) throw new ToolError(400, e.message); throw e; } };
+const seqCall = async <T>(fn: () => Promise<T>) => { try { return await fn(); } catch (e) { if (e instanceof SequenceError || e instanceof PlatformError) throw new ToolError(400, e.message); throw e; } };
 const channel = async <T>(fn: () => Promise<T>) => { try { return await fn(); } catch (e) { if (e instanceof PlatformError) throw new ToolError(400, e.message); throw e; } };
 
 const PLATFORMS = ["meta", "google", "tiktok", "linkedin", "pinterest", "x", "reddit", "microsoft", "snapchat", "openai"];
@@ -397,6 +402,7 @@ export const TOOLS: Tool[] = [
       titulo: { type: "string", maxLength: 100, description: "Título (obrigatório no YouTube)" },
       midias: { type: "array", items: { type: "string" }, maxItems: 35 }, tipo: { type: "string", enum: ["IMAGE", "REELS", "CAROUSEL", "STORIES"], description: "Formato no Instagram" },
       agendar_para: { type: "string", format: "date-time", description: "Vazio = publicar agora" }, rascunho: { type: "boolean", description: "true = só salva como rascunho" },
+      fila: { type: "boolean", description: "true = entra no próximo horário livre da fila (em vez de agendar_para)" }, fila_id: { type: "string", format: "uuid", description: "Fila específica (padrão: a principal)" },
     }, additionalProperties: false },
     run: async (ctx, a) => publishFor(ctx, a, PUBLISHABLE),
   },
@@ -566,6 +572,125 @@ export const TOOLS: Tool[] = [
       return { automacao: await q<Json>(ctx.sb.from("inbox_flows").update({ status: acao === "ativar" ? "ativo" : "pausado", updated_at: new Date().toISOString() }).eq("id", id).select("id, name, status").single()) };
     },
   },
+  /* ---------------------------------------------------------------- fila de publicação */
+  {
+    name: "listar_filas", title: "Listar filas de publicação", write: false,
+    description: "Filas do espaço com os horários semanais (fuso de cada fila), se está ativa, se é a padrão e os próximos horários livres.",
+    input: { type: "object", properties: {}, additionalProperties: false },
+    run: async (ctx) => {
+      const rows = await q<Json[]>(ctx.sb.from("post_queues").select(QUEUE_COLS).eq("workspace_id", ctx.ws).order("created_at"));
+      const filas = [];
+      for (const r of rows) { const fq = { ...(r as unknown as Queue), slots: cleanSlots(r.slots) }; filas.push({ id: fq.id, nome: fq.name, padrao: fq.is_default, ativa: fq.active, fuso: fq.timezone, horarios: describeSlots(fq.slots), contas_padrao: fq.account_ids, proximos_livres: (await freeSlots(ctx.sb, fq, 5)).map((d) => d.toISOString()) }); }
+      return { filas };
+    },
+  },
+  {
+    name: "configurar_fila", title: "Criar ou alterar fila de publicação", write: true,
+    description: "Define os horários fixos da semana em que a fila publica (ex.: segunda a sexta às 09:00 e 18:00). Sem fila_id cria uma nova (a primeira vira a padrão). reorganizar=true reagenda o que já está na fila nos novos horários, mantendo a ordem.",
+    input: { type: "object", properties: {
+      fila_id: { type: "string", format: "uuid" }, nome: { type: "string", maxLength: 80 },
+      horarios: { type: "array", maxItems: 168, items: { type: "object", properties: { dia: { type: "integer", minimum: 0, maximum: 6, description: "0 = domingo … 6 = sábado" }, hora: { type: "string", description: "HH:MM" } }, required: ["dia", "hora"] } },
+      fuso: { type: "string", default: "America/Sao_Paulo" }, contas: { type: "array", items: { type: "string", format: "uuid" }, description: "Contas usadas quando a publicação não informar contas" },
+      ativa: { type: "boolean" }, padrao: { type: "boolean" }, reorganizar: { type: "boolean" },
+    }, additionalProperties: false },
+    run: async (ctx, a) => queueCall(() => saveQueue(ctx.sb, ctx.ws, { id: a.fila_id ? needUuid(a.fila_id, "fila_id") : undefined, name: a.nome as string | undefined, timezone: str(a.fuso, 60) || undefined, slots: a.horarios, accountIds: Array.isArray(a.contas) ? a.contas.map((c) => str(c, 64)) : undefined, active: typeof a.ativa === "boolean" ? a.ativa : undefined, setAsDefault: a.padrao === true, reshuffle: a.reorganizar === true }).then((r) => ({ ...r, fila: { ...r.fila, horarios: describeSlots(r.fila.slots) } }))),
+  },
+  {
+    name: "proximos_horarios", title: "Próximos horários livres da fila", write: false,
+    description: "Os próximos N horários livres de uma fila (padrão: a fila principal), em ISO 8601.",
+    input: { type: "object", properties: { fila_id: { type: "string", format: "uuid" }, quantidade: { type: "integer", minimum: 1, maximum: 50, default: 10 } }, additionalProperties: false },
+    run: async (ctx, a) => queueCall(async () => { const fq = await loadQueue(ctx.sb, ctx.ws, a.fila_id ? needUuid(a.fila_id, "fila_id") : null); return { fila: fq.name, fuso: fq.timezone, proximos: (await freeSlots(ctx.sb, fq, int(a.quantidade, 10, 1, 50))).map((d) => d.toISOString()) }; }),
+  },
+  {
+    name: "excluir_fila", title: "Excluir fila", write: true,
+    description: "Exclui uma fila. As publicações já agendadas por ela continuam agendadas no mesmo horário.",
+    input: { type: "object", properties: { fila_id: { type: "string", format: "uuid" } }, required: ["fila_id"], additionalProperties: false },
+    run: async (ctx, a) => queueCall(() => deleteQueue(ctx.sb, ctx.ws, needUuid(a.fila_id, "fila_id"))),
+  },
+  /* ---------------------------------------------------------------- validação */
+  {
+    name: "validar_midia", title: "Validar mídia (imagem ou vídeo)", write: false,
+    description: "Confere se a URL abre e se o arquivo é mesmo imagem ou vídeo (pelos bytes, não pela extensão). Devolve formato, tamanho, dimensões, proporção, duração do vídeo e, para cada rede, se passa nos limites (tamanho, formato, duração, proporção do feed do Instagram). Recusa endereços internos.",
+    input: { type: "object", properties: { url: { type: "string" }, redes: { type: "array", items: { type: "string" } } }, required: ["url"], additionalProperties: false },
+    run: async (_ctx, a) => validateMedia(str(a.url, 2000), (Array.isArray(a.redes) ? a.redes.map((r) => str(r, 30)) : undefined) as ChannelId[] | undefined),
+  },
+  {
+    name: "contar_caracteres", title: "Contar caracteres por rede", write: false,
+    description: "Contagem do texto em cada rede e quanto sobra do limite. No X a contagem é ponderada (link = 23, emoji = 2). Também conta hashtags e menções (Instagram: até 30 e 20).",
+    input: { type: "object", properties: { texto: { type: "string" }, redes: { type: "array", items: { type: "string" } } }, required: ["texto"], additionalProperties: false },
+    run: async (_ctx, a) => countText(String(a.texto ?? ""), (Array.isArray(a.redes) ? a.redes.map((r) => str(r, 30)) : undefined) as ChannelId[] | undefined),
+  },
+  /* ---------------------------------------------------------------- sequências */
+  {
+    name: "listar_sequencias", title: "Listar sequências de mensagens", write: false,
+    description: "Sequências (mensagens em etapas com intervalo, pelo WhatsApp ou Instagram) com status, número de passos e inscritos ativos, concluídos, que saíram e com falha.",
+    input: { type: "object", properties: { status: { type: "string", enum: ["rascunho", "ativa", "pausada"] } }, additionalProperties: false },
+    run: async (ctx, a) => {
+      let sq = ctx.sb.from("sequences").select("id, name, description, status, steps, exit_on_reply, channel_account_id, channel_accounts(kind, name), created_at").eq("workspace_id", ctx.ws).order("created_at", { ascending: false });
+      const st = oneOf(a.status, ["rascunho", "ativa", "pausada"], "status", true); if (st) sq = sq.eq("status", st);
+      const rows = await q<Json[]>(sq);
+      const stats = await sequenceStats(ctx.sb, rows.map((r) => r.id as string));
+      return { sequencias: rows.map((r) => { const acc = r.channel_accounts as { kind?: string; name?: string } | null; const steps = (r.steps as Json[]) ?? []; return { id: r.id, nome: r.name, descricao: r.description, status: r.status, canal: acc?.kind ? channelLabel(acc.kind as ChannelId) : null, conta: acc?.name ?? null, passos: steps.length, sai_ao_responder: r.exit_on_reply, primeira_mensagem: steps[0]?.text ?? (steps[0] ? "(modelo do WhatsApp)" : null), inscritos: stats[r.id as string] ?? { ativos: 0, concluidos: 0, sairam: 0, falharam: 0 } }; }) };
+    },
+  },
+  {
+    name: "criar_sequencia", title: "Criar ou alterar sequência de mensagens", write: true,
+    description: "Cria (ou altera, com sequencia_id) uma sequência: passos com intervalo em minutos desde o passo anterior, cada um com texto (enviado só dentro da janela de 24 h após a última mensagem do contato) ou um modelo aprovado do WhatsApp (a qualquer momento). Aceita {{nome}} e {{primeiro_nome}}. Fica em rascunho até ativar_sequencia. Mostre os passos à pessoa e peça aprovação antes de ativar.",
+    input: { type: "object", properties: {
+      sequencia_id: { type: "string", format: "uuid" }, nome: { type: "string", maxLength: 120 }, descricao: { type: "string", maxLength: 500 },
+      conta_id: { type: "string", format: "uuid", description: "Número do WhatsApp ou conta do Instagram que envia (listar_contas_conectadas)" },
+      passos: { type: "array", maxItems: 20, items: { type: "object", properties: {
+        esperar_minutos: { type: "integer", minimum: 0, description: "Intervalo desde o passo anterior (o primeiro conta desde a inscrição). 1440 = 1 dia" },
+        tipo: { type: "string", enum: ["texto", "modelo"] }, texto: { type: "string" }, modelo_id: { type: "string", format: "uuid" }, variaveis: { type: "array", items: { type: "string" } },
+      }, required: ["esperar_minutos"] } },
+      sai_ao_responder: { type: "boolean", default: true },
+    }, additionalProperties: false },
+    run: async (ctx, a) => seqCall(async () => {
+      const s = await saveSequence(ctx.sb, ctx.ws, null, { id: a.sequencia_id ? needUuid(a.sequencia_id, "sequencia_id") : undefined, name: a.nome, description: a.descricao, channel_account_id: a.conta_id !== undefined ? (a.conta_id ? needUuid(a.conta_id, "conta_id") : null) : undefined, steps: a.passos, exit_on_reply: a.sai_ao_responder, source: a.sequencia_id ? undefined : "agente" });
+      return { sequencia: { id: s.id, nome: s.name, status: s.status, passos: ((s.steps as Json[]) ?? []).length }, proximo_passo: s.status === "ativa" ? "Já está ativa." : "Revise com a pessoa e chame ativar_sequencia." };
+    }),
+  },
+  {
+    name: "ativar_sequencia", title: "Ativar ou pausar sequência", write: true,
+    description: "Ativa (começa a enviar para os inscritos) ou pausa uma sequência.",
+    input: { type: "object", properties: { sequencia_id: { type: "string", format: "uuid" }, acao: { type: "string", enum: ["ativar", "pausar"] } }, required: ["sequencia_id", "acao"], additionalProperties: false },
+    run: async (ctx, a) => seqCall(() => setSequenceStatus(ctx.sb, ctx.ws, needUuid(a.sequencia_id, "sequencia_id"), a.acao === "ativar" ? "ativa" : "pausada")),
+  },
+  {
+    name: "excluir_sequencia", title: "Excluir sequência", write: true,
+    description: "Exclui uma sequência. As inscrições param na hora.",
+    input: { type: "object", properties: { sequencia_id: { type: "string", format: "uuid" } }, required: ["sequencia_id"], additionalProperties: false },
+    run: async (ctx, a) => {
+      const gone = await q<Json[]>(ctx.sb.from("sequences").delete().eq("workspace_id", ctx.ws).eq("id", needUuid(a.sequencia_id, "sequencia_id")).select("id"));
+      if (!gone.length) throw new ToolError(404, "Sequência não encontrada neste espaço.");
+      return { ok: true };
+    },
+  },
+  {
+    name: "inscrever_na_sequencia", title: "Inscrever contatos na sequência", write: true,
+    description: "Inscreve conversas (listar_conversas) ou números do WhatsApp na sequência. Quem já está inscrito é ignorado. Números sem conversa exigem que o primeiro passo seja um modelo.",
+    input: { type: "object", properties: {
+      sequencia_id: { type: "string", format: "uuid" }, conversas: { type: "array", items: { type: "string", format: "uuid" }, maxItems: 5000 },
+      numeros: { type: "array", maxItems: 5000, items: { type: "object", properties: { telefone: { type: "string" }, nome: { type: "string" } }, required: ["telefone"] } },
+    }, required: ["sequencia_id"], additionalProperties: false },
+    run: async (ctx, a) => seqCall(() => enroll(ctx.sb, ctx.ws, needUuid(a.sequencia_id, "sequencia_id"), { conversationIds: Array.isArray(a.conversas) ? a.conversas.map((c) => str(c, 64)) : [], phones: Array.isArray(a.numeros) ? a.numeros.map((n) => ({ phone: str((n as Json).telefone, 30), name: str((n as Json).nome, 120) })) : [] })),
+  },
+  {
+    name: "listar_inscricoes", title: "Listar inscritos de uma sequência", write: false,
+    description: "Contatos inscritos com status (ativa, concluída, saiu, falhou), passo atual, próximo envio e motivo de saída ou erro.",
+    input: { type: "object", properties: { sequencia_id: { type: "string", format: "uuid" }, status: { type: "string", enum: ["ativa", "concluida", "saiu", "falhou"] }, limite: { type: "integer", minimum: 1, maximum: 500, default: 100 } }, required: ["sequencia_id"], additionalProperties: false },
+    run: async (ctx, a) => {
+      let eq = ctx.sb.from("sequence_enrollments").select("id, conversation_id, phone, contact_name, status, current_step, next_run_at, exit_reason, last_error, enrolled_at").eq("workspace_id", ctx.ws).eq("sequence_id", needUuid(a.sequencia_id, "sequencia_id")).order("enrolled_at", { ascending: false }).limit(int(a.limite, 100, 1, 500));
+      const st = oneOf(a.status, ["ativa", "concluida", "saiu", "falhou"], "status", true); if (st) eq = eq.eq("status", st);
+      return { inscricoes: (await q<Json[]>(eq)).map((e) => ({ id: e.id, contato: e.contact_name, conversa_id: e.conversation_id, telefone: e.phone ? `+${e.phone}` : null, status: e.status, passo_atual: (e.current_step as number) + 1, proximo_envio: e.next_run_at, motivo_saida: e.exit_reason, erro: e.last_error, inscrito_em: e.enrolled_at })) };
+    },
+  },
+  {
+    name: "remover_da_sequencia", title: "Remover contato da sequência", write: true,
+    description: "Tira um inscrito da sequência (não recebe mais mensagens dela).",
+    input: { type: "object", properties: { inscricao_id: { type: "string", format: "uuid" } }, required: ["inscricao_id"], additionalProperties: false },
+    run: async (ctx, a) => seqCall(() => unenroll(ctx.sb, ctx.ws, needUuid(a.inscricao_id, "inscricao_id"))),
+  },
   /* ---------------------------------------------------------------- mídia, publicações, perfis, disparos e webhooks */
   {
     name: "gerar_link_de_envio", title: "Gerar link para enviar fotos e vídeos", write: true,
@@ -723,6 +848,8 @@ const WRITE_SCOPE: Record<string, string> = {
   responder_conversa: "mensagens", enviar_modelo_whatsapp: "mensagens", responder_comentario: "mensagens",
   publicar_instagram: "publicacoes", publicar: "publicacoes", gerar_link_de_envio: "publicacoes", editar_publicacao: "publicacoes", excluir_publicacao: "publicacoes", publicar_agora: "publicacoes", tentar_novamente: "publicacoes",
   criar_disparo_whatsapp: "mensagens", criar_webhook: "automacoes", excluir_webhook: "automacoes",
+  configurar_fila: "publicacoes", excluir_fila: "publicacoes",
+  criar_sequencia: "automacoes", ativar_sequencia: "automacoes", excluir_sequencia: "automacoes", inscrever_na_sequencia: "mensagens", remover_da_sequencia: "mensagens",
   criar_automacao_comentario: "automacoes", alterar_automacao: "automacoes",
 };
 export const scopeOf = (t: Tool) => (t.write ? WRITE_SCOPE[t.name] ?? "escrita" : "leitura");
@@ -735,6 +862,9 @@ const DOCS: { titulo: string; texto: string }[] = [
   { titulo: "Permissões", texto: "leitura (ler dados), publicacoes (publicar e agendar), mensagens (responder conversas, comentários e modelos do WhatsApp), automacoes (comentário → DM, respostas automáticas, webhooks), anuncios (pausar/ativar campanhas, públicos e regras), crm (leads e conversões), todos_espacos (agência: agir em todos os clientes com perfil_id)." },
   { titulo: "Publicar com vídeo ou foto do computador", texto: "Chame gerar_link_de_envio, entregue o link para a pessoa soltar os arquivos, depois verificar_envio com o token e use 'midias' em publicar_instagram. Formatos: JPG, PNG, WebP, GIF, MP4, MOV, M4V, WebM. Reels: vídeo MP4 vertical 9:16, até 15 minutos." },
   { titulo: "Publicar, agendar e rascunho", texto: "publicar publica agora, agenda (agendar_para em ISO 8601) ou salva rascunho (rascunho=true) em várias redes de uma vez. Com mais de uma conta, informe contas; sem isso a ferramenta devolve a lista para escolher. Adapte o texto por rede em textos_por_rede e confira antes com validar_publicacao. Depois: listar_publicacoes, detalhar_publicacao, editar_publicacao, publicar_agora, excluir_publicacao, tentar_novamente (status parcial = saiu em parte das redes)." },
+  { titulo: "Fila de publicação", texto: "configurar_fila define horários fixos na semana (dia 0 = domingo, hora HH:MM, fuso). publicar com fila=true coloca no próximo horário livre. proximos_horarios mostra os horários livres; reorganizar=true reagenda o que já está na fila quando os horários mudam." },
+  { titulo: "Validação", texto: "validar_publicacao confere texto, título e mídias contra cada rede. validar_midia abre a mídia e confere formato pelos bytes, tamanho, dimensões, proporção e duração por rede. contar_caracteres conta por rede, com a contagem ponderada do X (link = 23, emoji = 2)." },
+  { titulo: "Sequências de mensagens", texto: "criar_sequencia monta passos com intervalo (esperar_minutos; 1440 = 1 dia), cada um com texto (só dentro de 24 h após a última mensagem do contato) ou modelo aprovado do WhatsApp. ativar_sequencia começa a enviar. inscrever_na_sequencia inscreve conversas ou números. Com sai_ao_responder, o contato sai quando responde. listar_inscricoes mostra o andamento." },
   { titulo: "Redes e limites", texto: "Instagram (2.200 caracteres, exige foto ou vídeo), Facebook (texto, até 10 fotos ou 1 vídeo), Threads (500, até 20 mídias), LinkedIn (3.000, fotos ou 1 vídeo), YouTube (1 vídeo, título até 100), TikTok (vídeo ou fotos, 2.200), X (280, até 4 fotos ou 1 vídeo), Telegram (4.096, até 10 mídias), Discord (2.000), Bluesky (300, até 4 fotos de 1 MB ou 1 vídeo). Conecte em Conexões › Redes para publicar." },
   { titulo: "Comentário vira DM (palavra-chave)", texto: "criar_automacao_comentario: quem comentar a palavra recebe DM com botão de link (até 20 caracteres no rótulo, link https) e resposta pública opcional. Pode valer para uma publicação (publicacao_id ou midia_ids) e uma vez por pessoa. A DM privada só pode ser enviada até 7 dias após o comentário. listar_automacoes e alterar_automacao gerenciam." },
   { titulo: "Análises", texto: "analisar_publicacoes: totais, médias, por formato, dia da semana e horário (Brasília), melhores e piores publicações do Instagram. resumo_desempenho, listar_campanhas e detalhar_campanha: anúncios (investimento, cliques, conversões, CPC, ROAS)." },
@@ -784,6 +914,11 @@ TOOLS.push(
 /** Resolve as contas (recusa ambiguidade) e salva/publica. */
 async function publishFor(ctx: ToolCtx, a: Json, kinds: ChannelId[]) {
   let contas = (Array.isArray(a.contas) ? a.contas : []).map((c) => str(c, 64)).filter(Boolean);
+  const useQueue = a.fila === true || !!a.fila_id;
+  if (useQueue && !contas.length) {
+    const fq = await queueCall(() => loadQueue(ctx.sb, ctx.ws, a.fila_id ? needUuid(a.fila_id, "fila_id") : null));
+    contas = fq.account_ids;
+  }
   const all = await q<Json[]>(ctx.sb.from("channel_accounts").select("id, name, kind, status").eq("workspace_id", ctx.ws).in("kind", kinds).eq("status", "ativo"));
   if (!contas.length) {
     if (!all.length) throw new ToolError(400, kinds.length === 1 ? `Nenhuma conta do ${channelLabel(kinds[0])} conectada neste espaço.` : "Nenhuma rede conectada para publicar neste espaço.");
@@ -792,7 +927,7 @@ async function publishFor(ctx: ToolCtx, a: Json, kinds: ChannelId[]) {
   }
   const unknown = contas.filter((c) => !all.some((x) => x.id === c));
   if (unknown.length) throw new ToolError(400, `Conta(s) não encontrada(s) ou desconectada(s): ${unknown.join(", ")}. Use listar_contas_conectadas.`);
-  return channel(() => savePost({ sb: ctx.sb, env: ctx.env, ws: ctx.ws, userId: null }, { content: str(a.legenda, 63206), custom: a.textos_por_rede ?? {}, title: str(a.titulo, 200) || undefined, accountIds: contas, mediaUrls: a.midias, mediaType: a.tipo, scheduledAt: a.agendar_para, mode: a.rascunho === true ? "rascunho" : a.agendar_para ? "agendar" : "agora" }));
+  return channel(() => savePost({ sb: ctx.sb, env: ctx.env, ws: ctx.ws, userId: null }, { content: str(a.legenda, 63206), custom: a.textos_por_rede ?? {}, title: str(a.titulo, 200) || undefined, accountIds: contas, mediaUrls: a.midias, mediaType: a.tipo, scheduledAt: a.agendar_para, queueId: a.fila_id ? needUuid(a.fila_id, "fila_id") : undefined, mode: a.rascunho === true ? "rascunho" : useQueue ? "fila" : a.agendar_para ? "agendar" : "agora" }));
 }
 
 export const TOOL_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));

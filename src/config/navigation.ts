@@ -1,6 +1,6 @@
 import {
   BarChart3, Blocks, Bot, Building2, Cable, CalendarClock, ChartLine, CircleDollarSign, FileText, Gauge, Globe, Hash, Home, Image, Inbox,
-  KeyRound, Layers, LayoutGrid, ListChecks, Megaphone, MessageCircle, MessageSquare, MessagesSquare, Mic, Phone, PhoneCall, Radio,
+  KeyRound, Layers, LayoutGrid, ListChecks, ListOrdered, Megaphone, MessageCircle, MessageSquare, MessagesSquare, Mic, Phone, PhoneCall, Radio,
   Receipt, ScrollText, Send, Settings, ShieldCheck, ShoppingBag, Sparkles, Star, Tag, Target, Ticket, UserRound, Users, Webhook, Workflow,
   AtSign, BadgeCheck, Contact, FolderSync, Smartphone, Server, Link2, Boxes, AppWindow, type LucideIcon,
 } from "lucide-react";
@@ -56,6 +56,7 @@ export const NAV: NavGroup[] = [
           { id: "inbox-mentions", label: "Menções", path: "/caixa-de-entrada/mencoes", icon: AtSign },
           { id: "inbox-campaigns", label: "Campanhas", path: "/caixa-de-entrada/campanhas", icon: Send },
           { id: "inbox-workflows", label: "Fluxos", path: "/caixa-de-entrada/fluxos", icon: Workflow },
+          { id: "inbox-sequences", label: "Sequências", path: "/caixa-de-entrada/sequencias", icon: ListOrdered },
           { id: "inbox-contacts", label: "Contatos", path: "/caixa-de-entrada/contatos", icon: Contact },
         ] }],
       },
@@ -237,7 +238,7 @@ export const groupOf = (id: string) => NAV.find((g) => g.items.some((i) => i.id 
 /* ---------------------------------------------------------------- versão para clientes reais (banco conectado) */
 /** Itens que dependem de serviços externos ainda não contratados: somem do menu com o banco conectado. */
 export const LIVE_HIDDEN = new Set([
-  "posts-queues", "inbox-reviews", "commerce", "creators", "wa-flows", "wa-groups", "wa-conversions", "imessage", "phone",
+  "inbox-reviews", "commerce", "creators", "wa-flows", "wa-groups", "wa-conversions", "imessage", "phone",
   "set-usage", "set-billing", "set-security", "set-retention", "set-notifications", "set-apps", "set-slack", "set-leaderboard", "set-ai", "set-whitelabel", "set-sso", "set-danger",
   "hashtags", "live", "balance", "account", "ads-keywords", "ads-search-terms", "ads-bids", "ads-catalogs", "ads-partnerships",
 ]);

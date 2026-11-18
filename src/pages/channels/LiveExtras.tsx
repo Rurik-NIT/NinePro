@@ -26,7 +26,7 @@ const shortDay = (k: string) => `${k.slice(8, 10)}/${k.slice(5, 7)}`;
 const lastDays = (n: number) => Array.from({ length: n }, (_, i) => dayKey(new Date(Date.now() - (n - 1 - i) * DAY)));
 
 /* ------------------------------------------------------------------ Fluxos (respostas automáticas) */
-interface Flow { id: string; name: string; status: "ativo" | "pausado"; trigger: "mensagem" | "primeira_mensagem" | "comentario" | "fora_do_horario"; channel: "todos" | "WhatsApp" | "Instagram"; match: "qualquer" | "contem" | "exata"; keywords: string[]; reply: string; comment_reply: string; hours: { start: string; end: string; days: number[] }; runs: number; last_run_at: string | null; button_label: string | null; button_url: string | null; media_ids: string[]; post_id: string | null; once_per_user: boolean; source?: string }
+interface Flow { id: string; name: string; status: "ativo" | "pausado"; trigger: "mensagem" | "primeira_mensagem" | "comentario" | "fora_do_horario"; channel: "todos" | "WhatsApp" | "Instagram"; match: "qualquer" | "contem" | "exata"; keywords: string[]; reply: string; comment_reply: string; hours: { start: string; end: string; days: number[] }; runs: number; last_run_at: string | null; button_label: string | null; button_url: string | null; media_ids: string[]; post_id: string | null; once_per_user: boolean; source?: string; sequence_id?: string | null }
 const TRIGGER_LABEL: Record<Flow["trigger"], string> = { mensagem: "Mensagem recebida", primeira_mensagem: "Primeira mensagem do contato", comentario: "Comentário no Instagram", fora_do_horario: "Mensagem fora do horário" };
 const WEEK = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 const blankFlow = (): Omit<Flow, "id" | "runs" | "last_run_at"> => ({ name: "", status: "ativo", trigger: "primeira_mensagem", channel: "todos", match: "qualquer", keywords: [], reply: "", comment_reply: "", hours: { start: "09:00", end: "18:00", days: [1, 2, 3, 4, 5] }, button_label: null, button_url: null, media_ids: [], post_id: null, once_per_user: true });
@@ -74,6 +74,8 @@ function FlowModal({ flow, ws, onOpenChange, onSaved }: { flow: Flow | "novo" | 
   useEffect(() => { if (!flow) return; const v = flow === "novo" ? blankFlow() : { ...flow }; setF(v); setKw(v.keywords.join(", ")); }, [flow]);
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }));
   const isComment = f.trigger === "comentario";
+  const [seqs, setSeqs] = useState<{ id: string; name: string; status: string }[]>([]);
+  useEffect(() => { if (flow && supabase) supabase.from("sequences").select("id, name, status").eq("workspace_id", ws).order("name").then(({ data }) => setSeqs((data as typeof seqs | null) ?? [])); }, [flow, ws]);
   const [media, setMedia] = useState<{ media_id: string; caption: string | null; posted_at: string | null; media_type: string | null }[]>([]);
   useEffect(() => {
     if (!flow || !supabase) return;
@@ -81,7 +83,7 @@ function FlowModal({ flow, ws, onOpenChange, onSaved }: { flow: Flow | "novo" | 
   }, [flow, ws]);
   const hasButton = !!(f.button_label?.trim() || f.button_url?.trim());
   const buttonOk = !hasButton || (!!f.button_label?.trim() && /^https:\/\/[^\s/]+\.[^\s]+/.test(f.button_url?.trim() ?? ""));
-  const valid = f.name.trim().length > 1 && (f.reply.trim() || (isComment && f.comment_reply.trim())) && (f.match === "qualquer" || kw.trim()) && (!isComment || buttonOk);
+  const valid = f.name.trim().length > 1 && (f.reply.trim() || (isComment && f.comment_reply.trim()) || (!isComment && !!f.sequence_id)) && (f.match === "qualquer" || kw.trim()) && (!isComment || buttonOk);
   const save = async () => {
     setBusy(true);
     const row = { ...f, name: f.name.trim(), keywords: f.match === "qualquer" ? [] : kw.split(",").map((k) => k.trim()).filter(Boolean), channel: isComment ? "Instagram" : f.channel, button_label: isComment && hasButton ? f.button_label!.trim().slice(0, 20) : null, button_url: isComment && hasButton ? f.button_url!.trim() : null, media_ids: isComment ? f.media_ids : [], updated_at: new Date().toISOString() };
@@ -120,6 +122,7 @@ function FlowModal({ flow, ws, onOpenChange, onSaved }: { flow: Flow | "novo" | 
             <div className="md:col-span-2"><Switch checked={f.once_per_user} onCheckedChange={(v) => set("once_per_user", v)} label="Uma vez por pessoa" description="Quem já recebeu a mensagem deste fluxo não recebe de novo ao comentar outra vez." /></div>
           </>
         )}
+        {!isComment && seqs.length > 0 && <Field label="Inscrever na sequência" className="md:col-span-2" hint="Opcional. Quem disparar o fluxo entra na sequência escolhida.">{(p) => <Select id={p.id} value={f.sequence_id ?? "nenhuma"} onValueChange={(v) => set("sequence_id", v === "nenhuma" ? null : v)} options={[{ value: "nenhuma", label: "Não inscrever" }, ...seqs.map((x) => ({ value: x.id, label: `${x.name}${x.status !== "ativa" ? " (não ativa)" : ""}` }))]} />}</Field>}
         <div className="md:col-span-2"><Switch checked={f.status === "ativo"} onCheckedChange={(v) => set("status", v ? "ativo" : "pausado")} label="Ativo" description="Só o primeiro fluxo que combinar responde. A mesma conversa não recebe o mesmo fluxo de novo por 6 horas." /></div>
       </div>
     </Modal>

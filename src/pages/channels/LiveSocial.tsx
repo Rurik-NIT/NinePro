@@ -227,7 +227,9 @@ function Composer({ post, onOpenChange, ws, accounts, onSaved }: { post: Post | 
   const [perNetwork, setPerNetwork] = useState(false);
   const [media, setMedia] = useState<string[]>([]);
   const [type, setType] = useState("FEED");
-  const [mode, setMode] = useState<"agora" | "agendar" | "rascunho">("agora");
+  const [mode, setMode] = useState<"agora" | "agendar" | "fila" | "rascunho">("agora");
+  const [nextSlot, setNextSlot] = useState<string | null | undefined>(undefined);
+  const [checks, setChecks] = useState<Record<string, { valido: boolean; erro?: string; redes?: Record<string, { ok: boolean; motivos: string[] }> }>>({});
   const [when, setWhen] = useState("");
   const [url, setUrl] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -245,6 +247,22 @@ function Composer({ post, onOpenChange, ws, accounts, onSaved }: { post: Post | 
   }, [post, accounts]);
 
   const kinds = [...new Set(accounts.filter((a) => selected.includes(a.id)).map((a) => a.kind))];
+  useEffect(() => {
+    if (mode !== "fila") return;
+    setNextSlot(undefined);
+    channelCall<{ proximos: string[] }>({ action: "queue_preview", workspaceId: ws, count: 1 }).then((r) => setNextSlot(r.proximos[0] ?? null)).catch(() => setNextSlot(null));
+  }, [mode, ws]);
+  useEffect(() => {
+    for (const m of media) if (!checks[m]) {
+      setChecks((c) => ({ ...c, [m]: { valido: true } }));
+      channelCall<{ valido: boolean; erro?: string; redes?: Record<string, { ok: boolean; motivos: string[] }> }>({ action: "validate_media", workspaceId: ws, url: m }).then((r) => setChecks((c) => ({ ...c, [m]: r }))).catch(() => undefined);
+    }
+  }, [media, ws]); // eslint-disable-line react-hooks/exhaustive-deps
+  const mediaIssues = media.flatMap((m, i) => {
+    const c = checks[m]; if (!c) return [];
+    if (!c.valido) return [`Mídia ${i + 1}: ${c.erro ?? "inválida"}`];
+    return kinds.map((k) => ({ k, r: c.redes?.[NETWORK[k].label] })).filter((x) => x.r && !x.r.ok).map((x) => `Mídia ${i + 1} no ${NETWORK[x.k].label}: ${x.r!.motivos.join("; ")}`);
+  });
   const hasIg = kinds.includes("instagram");
   const upload = async (files: FileList | null) => {
     if (!files?.length || !supabase) return;
@@ -269,15 +287,15 @@ function Composer({ post, onOpenChange, ws, accounts, onSaved }: { post: Post | 
   const mediaType = type === "STORIES" ? "STORIES" : media.length > 1 ? "CAROUSEL" : type === "REELS" || hasVideo ? "REELS" : "IMAGE";
   const customUsed = perNetwork ? custom : {};
   const problems = mode === "rascunho" ? [] : checkDraft(kinds, { text: content, title, custom: customUsed, media });
-  const valid = mode === "rascunho" ? content.trim().length > 0 || media.length > 0 : selected.length > 0 && !problems.length && (mode !== "agendar" || !!when);
+  const valid = mode === "rascunho" ? content.trim().length > 0 || media.length > 0 : selected.length > 0 && !problems.length && (mode !== "agendar" || !!when) && (mode !== "fila" || !!nextSlot);
 
   const submit = async () => {
     setBusy(true); setError(null);
     try {
-      const r = await channelCall<{ ok: boolean; status: string; error?: string | null }>({ action: "post_save", workspaceId: ws, id: post && post !== "novo" ? post.id : undefined, content, title: title.trim() || undefined, custom: customUsed, accountIds: selected, mediaUrls: media, mediaType, mode, scheduledAt: mode === "agendar" ? new Date(when).toISOString() : undefined });
+      const r = await channelCall<{ ok: boolean; status: string; error?: string | null; agendada_para?: string }>({ action: "post_save", workspaceId: ws, id: post && post !== "novo" ? post.id : undefined, content, title: title.trim() || undefined, custom: customUsed, accountIds: selected, mediaUrls: media, mediaType, mode, scheduledAt: mode === "agendar" ? new Date(when).toISOString() : undefined });
       if (mode === "agora" && !r.ok) { setError(r.error ?? "A publicação falhou."); setBusy(false); onSaved(); return; }
       if (mode === "agora" && r.status === "parcial") toast({ tone: "warning", title: "Publicado em parte das redes", description: r.error ?? undefined });
-      else toast({ tone: "success", title: mode === "agora" ? `Publicado em ${kinds.length} rede(s)` : mode === "agendar" ? "Publicação agendada" : "Rascunho salvo" });
+      else toast({ tone: "success", title: mode === "agora" ? `Publicado em ${kinds.length} rede(s)` : mode === "fila" ? `Na fila para ${r.agendada_para ? formatDateTime(new Date(r.agendada_para)) : "o próximo horário"}` : mode === "agendar" ? "Publicação agendada" : "Rascunho salvo" });
       onOpenChange(false); onSaved();
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     setBusy(false);
@@ -287,7 +305,7 @@ function Composer({ post, onOpenChange, ws, accounts, onSaved }: { post: Post | 
   const maxText = Math.min(...kinds.map((k) => NETWORK[k].limits?.text ?? 63206), 63206);
   return (
     <Modal open={!!post} onOpenChange={onOpenChange} size="lg" icon={<Send />} title={post && post !== "novo" ? "Editar publicação" : "Nova publicação"}
-      footer={<><Button variant="ghost" onClick={() => onOpenChange(false)}>Cancelar</Button><Button variant="primary" loading={busy} disabled={!valid || uploading} icon={mode === "agendar" ? <CalendarClock /> : mode === "agora" ? <Send /> : undefined} onClick={() => void submit()}>{mode === "agora" ? `Publicar agora${kinds.length > 1 ? ` em ${kinds.length} redes` : ""}` : mode === "agendar" ? "Agendar" : "Salvar rascunho"}</Button></>}>
+      footer={<><Button variant="ghost" onClick={() => onOpenChange(false)}>Cancelar</Button><Button variant="primary" loading={busy} disabled={!valid || uploading} icon={mode === "agendar" ? <CalendarClock /> : mode === "agora" ? <Send /> : undefined} onClick={() => void submit()}>{mode === "agora" ? `Publicar agora${kinds.length > 1 ? ` em ${kinds.length} redes` : ""}` : mode === "agendar" ? "Agendar" : mode === "fila" ? "Adicionar à fila" : "Salvar rascunho"}</Button></>}>
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
           <span className="text-secondary font-semibold text-text-soft">Onde publicar</span>
@@ -331,10 +349,12 @@ function Composer({ post, onOpenChange, ws, accounts, onSaved }: { post: Post | 
           <Field key={k} label={`Texto no ${NETWORK[k].label}`} hint={`${graphemeCount(custom[k] || content)}/${NETWORK[k].limits?.text ?? "∞"} · vazio = usa o texto principal`}>{(p) => <Textarea id={p.id} value={custom[k] ?? ""} onChange={(e) => setCustom((c) => ({ ...c, [k]: e.target.value }))} rows={3} placeholder={content} />}</Field>
         ))}
         <div className="flex flex-col gap-2">
-          <SegmentedControl ariaLabel="Quando" value={mode} onValueChange={setMode} options={[{ value: "agora", label: "Publicar agora" }, { value: "agendar", label: "Agendar" }, { value: "rascunho", label: "Rascunho" }]} />
+          <SegmentedControl ariaLabel="Quando" value={mode} onValueChange={setMode} options={[{ value: "agora", label: "Publicar agora" }, { value: "agendar", label: "Agendar" }, { value: "fila", label: "Adicionar à fila" }, { value: "rascunho", label: "Rascunho" }]} />
+          {mode === "fila" && <span className="t-caption">{nextSlot === undefined ? "Buscando o próximo horário livre…" : nextSlot ? `Entra no próximo horário livre: ${formatDateTime(new Date(nextSlot))}.` : <>Sem fila configurada ou sem horário livre. <Link to="/publicacoes/filas" className="text-accent-text hover:underline">Configurar filas →</Link></>}</span>}
           {mode === "agendar" && <Input type="datetime-local" value={when} min={localInput(new Date(Date.now() + 120_000))} onChange={(e) => setWhen(e.target.value)} className="max-w-[260px]" />}
           {mode === "agendar" && <span className="t-caption">O NinePro publica no horário escolhido (verificação a cada 5 minutos).</span>}
         </div>
+        {mediaIssues.length > 0 && <InlineNotice tone="warning"><ul className="list-disc pl-4">{mediaIssues.map((x) => <li key={x}>{x}</li>)}</ul></InlineNotice>}
         {problems.length > 0 && selected.length > 0 && <InlineNotice tone="warning"><ul className="list-disc pl-4">{problems.map((x) => <li key={x}>{x}</li>)}</ul></InlineNotice>}
         {error && <InlineNotice tone="negative">{error}</InlineNotice>}
       </div>

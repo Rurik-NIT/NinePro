@@ -13,6 +13,9 @@ import * as IG from "./platforms/instagram.js";
 import * as WA from "./platforms/whatsapp.js";
 import type { WebhookEvent } from "./events.js";
 import { dispatchEvent } from "./webhooks.js";
+import { deleteQueue, freeSlots, loadQueue, nextQueueSlot, QueueError, saveQueue } from "./queue.js";
+import { countText, validateMedia, xWeighted } from "./validate.js";
+import { enroll, exitOnReply, processSequences, saveSequence, SequenceError, setSequenceStatus, unenroll } from "./sequences.js";
 
 type Env = Record<string, string | undefined>;
 type Json = Record<string, unknown>;
@@ -276,6 +279,7 @@ async function handleWhatsAppChange(sb: SupabaseClient, env: Env, change: Json, 
       } catch (e) { console.error("mídia do WhatsApp:", msg(e)); }
     }
     await dispatchEvent(sb, acc.workspace_id, "mensagem.recebida", { canal: "whatsapp", conversa_id: convId, de: `+${from}`, nome: name, texto: body, tipo: kind, numero: acc.name, recebida_em: at });
+    await exitOnReply(sb, convId).catch((e) => console.error("sequência:", msg(e)));
     await runMessageFlows(sb, env, acc, convId, body).catch((e) => console.error("fluxo:", msg(e)));
   }
   for (const s of (v.statuses ?? []) as Json[]) {
@@ -319,6 +323,7 @@ async function handleInstagramEntry(sb: SupabaseClient, env: Env, entry: Json, c
     const id = await saveMessage(sb, acc.workspace_id, convId, { externalId: String(m.mid ?? ""), direction: echo ? "out" : "in", body, kind: att?.type ?? "text", mediaUrl: att?.payload?.url ?? null, status: echo ? "enviada" : "recebida", at });
     if (id !== null && !echo) {
       await dispatchEvent(sb, acc.workspace_id, "mensagem.recebida", { canal: "instagram", conversa_id: convId, de: prof.username ? `@${prof.username}` : thread, nome: prof.name ?? null, texto: body, conta: acc.name, recebida_em: at });
+      await exitOnReply(sb, convId).catch((e) => console.error("sequência:", msg(e)));
       await runMessageFlows(sb, env, acc, convId, body).catch((e) => console.error("fluxo:", msg(e)));
     }
   }
@@ -503,7 +508,9 @@ export function checkPost(kinds: ChannelId[], d: PostDraft) {
     const lim = CHANNELS[kind]?.limits; const name = LABEL[kind] ?? kind;
     if (!lim) { problemas.push(`${name}: publicação não disponível.`); continue; }
     const text = (d.custom?.[kind] ?? d.text).trim();
-    const n = graphemes(text);
+    const n = kind === "x" ? xWeighted(text) : graphemes(text);
+    if (kind === "instagram" && (text.match(/(^|\s)#[\p{L}\p{N}_]+/gu) ?? []).length > 30) problemas.push("Instagram: no máximo 30 hashtags.");
+    if (kind === "instagram" && (text.match(/(^|\s)@[\w.]+/g) ?? []).length > 20) problemas.push("Instagram: no máximo 20 menções.");
     if (n > lim.text) (kind === "x" ? avisos : problemas).push(`${name}: o texto tem ${n} caracteres (máximo ${lim.text}${kind === "x" ? ", exceto contas Premium" : ""}).`);
     if (!media.length && !lim.textOnly) problemas.push(`${name}: precisa de ${lim.needsMedia === "video" ? "um vídeo" : "foto ou vídeo"}.`);
     if (!media.length && lim.textOnly && !text) problemas.push(`${name}: escreva um texto ou adicione mídia.`);
@@ -561,26 +568,33 @@ export async function savePost(ctx: ChannelCtx, p: Json) {
   const content = String(p.content ?? "").slice(0, 63206);
   const title = p.title ? String(p.title).slice(0, 255) : null;
   const custom = Object.fromEntries(Object.entries((p.custom ?? {}) as Json).filter(([k, v]) => isChannel(k) && typeof v === "string" && v.trim()).map(([k, v]) => [k, String(v).slice(0, 63206)]));
-  const accountIds = (Array.isArray(p.accountIds) ? p.accountIds : []).map(String).slice(0, 50);
+  const accountIdsRaw = () => (Array.isArray(p.accountIds) ? p.accountIds : []).map(String).slice(0, 50);
   const mediaUrls = (Array.isArray(p.mediaUrls) ? p.mediaUrls : []).map(String).filter((u) => /^https:\/\//.test(u)).slice(0, 35);
   const mediaType = ["IMAGE", "VIDEO", "REELS", "CAROUSEL", "STORIES"].includes(String(p.mediaType)) ? String(p.mediaType) : mediaUrls.length > 1 ? "CAROUSEL" : mediaUrls.some(isVideoUrl) ? "REELS" : "IMAGE";
   const when = p.scheduledAt ? new Date(String(p.scheduledAt)) : null;
-  const mode = p.mode === "agora" ? "agora" : p.mode === "agendar" ? "agendar" : "rascunho";
+  const mode = p.mode === "agora" ? "agora" : p.mode === "agendar" || p.mode === "fila" ? "agendar" : "rascunho";
+  let queueId: string | null = null;
+  let when2 = when;
+  if (p.mode === "fila") {
+    try { const q = await nextQueueSlot(ctx.sb, ctx.ws, p.queueId ? String(p.queueId) : null, p.id ? String(p.id) : undefined); queueId = q.queue.id; when2 = q.at; if (!(Array.isArray(p.accountIds) && p.accountIds.length) && q.queue.account_ids.length) p.accountIds = q.queue.account_ids; }
+    catch (e) { throw new PlatformError(e instanceof Error ? e.message : String(e)); }
+  }
+  const accountIds = accountIdsRaw();
   const { data: accs } = accountIds.length ? await ctx.sb.from("channel_accounts").select("id, name, kind").eq("workspace_id", ctx.ws).in("id", accountIds).in("kind", PUBLISHABLE) : { data: [] as { id: string; name: string; kind: ChannelId }[] };
   if (mode !== "rascunho") {
     if (!accs?.length) throw new PlatformError("Escolha ao menos uma conta para publicar.");
     const chk = checkPost(accs.map((a) => a.kind as ChannelId), { text: content, title: title ?? undefined, custom, mediaUrls, mediaType });
     if (!chk.ok) throw new PlatformError(chk.problemas.join(" "));
   }
-  if (mode === "agendar" && (!when || Number.isNaN(when.getTime()) || when.getTime() < Date.now() + 60_000)) throw new PlatformError("Escolha uma data e hora no futuro.");
+  if (mode === "agendar" && (!when2 || Number.isNaN(when2.getTime()) || when2.getTime() < Date.now() + 60_000)) throw new PlatformError("Escolha uma data e hora no futuro.");
   const row = { workspace_id: ctx.ws, content, title, custom, channels: [...new Set((accs ?? []).map((a) => LABEL[a.kind as ChannelId] ?? a.kind))], channel_account_ids: (accs ?? []).map((a) => a.id), media_urls: mediaUrls, media_type: mediaType,
-    status: mode === "rascunho" ? "rascunho" : "agendada", scheduled_at: mode === "agendar" ? when!.toISOString() : mode === "agora" ? now() : null, error: null, attempts: 0, result: {}, updated_at: now() };
+    status: mode === "rascunho" ? "rascunho" : "agendada", scheduled_at: mode === "agendar" ? when2!.toISOString() : mode === "agora" ? now() : null, queue_id: queueId, error: null, attempts: 0, result: {}, updated_at: now() };
   const id = p.id ? String(p.id) : null;
   const q = id ? ctx.sb.from("posts").update(row).eq("workspace_id", ctx.ws).eq("id", id) : ctx.sb.from("posts").insert({ ...row, created_by: ctx.userId });
   const { data, error } = await q.select("id").single();
   if (error || !data) throw new Error(error?.message ?? "Não foi possível salvar.");
   if (mode === "agora") return { id: data.id as string, ...(await publishPost(ctx.sb, ctx.env, data.id as string)) };
-  return { id: data.id as string, ok: true, status: row.status };
+  return { id: data.id as string, ok: true, status: row.status, ...(queueId ? { fila: queueId, agendada_para: row.scheduled_at } : {}) };
 }
 
 /* ------------------------------------------------------------------ handler HTTP das telas */
@@ -664,6 +678,38 @@ export async function handleChannels(req: Request, env: Env): Promise<Response> 
         return json(200, { ok: true });
       }
       case "post_save": return json(200, await savePost(ctx, body));
+      /* ---------------- fila de publicação */
+      case "queue_save": {
+        if (!isAdmin) return json(403, { error: "Só administradores do espaço podem mudar a fila." });
+        return json(200, await saveQueue(sb, ws, { id: body.queueId ? str("queueId") : undefined, name: body.name as string, timezone: body.timezone as string, slots: body.slots, accountIds: body.accountIds as string[] | undefined, active: body.active as boolean | undefined, setAsDefault: body.setAsDefault === true, reshuffle: body.reshuffle === true }));
+      }
+      case "queue_delete": {
+        if (!isAdmin) return json(403, { error: "Só administradores do espaço podem excluir a fila." });
+        return json(200, await deleteQueue(sb, ws, str("queueId")));
+      }
+      case "queue_preview": {
+        const q = await loadQueue(sb, ws, body.queueId ? str("queueId") : null);
+        return json(200, { proximos: (await freeSlots(sb, q, Math.min(50, Math.max(1, Number(body.count ?? 10))))).map((d) => d.toISOString()) });
+      }
+      /* ---------------- validação */
+      case "validate_media": return json(200, await validateMedia(str("url"), (body.kinds as never[]) ?? undefined));
+      case "count_text": return json(200, countText(str("text"), (body.kinds as never[]) ?? undefined));
+      /* ---------------- sequências */
+      case "seq_save": {
+        if (!isAdmin) return json(403, { error: "Só administradores do espaço podem editar sequências." });
+        return json(200, await saveSequence(sb, ws, u.user.id, (body.sequence ?? {}) as Json));
+      }
+      case "seq_status": {
+        if (!isAdmin) return json(403, { error: "Só administradores do espaço podem ativar ou pausar sequências." });
+        return json(200, await setSequenceStatus(sb, ws, str("sequenceId"), body.status === "ativa" ? "ativa" : "pausada"));
+      }
+      case "seq_delete": {
+        if (!isAdmin) return json(403, { error: "Só administradores do espaço podem excluir sequências." });
+        await sb.from("sequences").delete().eq("workspace_id", ws).eq("id", str("sequenceId"));
+        return json(200, { ok: true });
+      }
+      case "seq_enroll": return json(200, await enroll(sb, ws, str("sequenceId"), { conversationIds: body.conversationIds as string[], phones: body.phones as { phone: string; name?: string }[] }));
+      case "seq_unenroll": return json(200, await unenroll(sb, ws, str("enrollmentId")));
       case "broadcast_create": {
         if (!isAdmin) return json(403, { error: "Só administradores do espaço podem fazer disparos." });
         return json(200, await createBroadcast(ctx, body));
@@ -687,6 +733,7 @@ export async function handleChannels(req: Request, env: Env): Promise<Response> 
     }
   } catch (e) {
     if (e instanceof PlatformError) return json(400, { error: e.expired ? "As credenciais do canal expiraram. Reconecte em Conexões." : e.message });
+    if (e instanceof QueueError || e instanceof SequenceError) return json(400, { error: e.message });
     console.error(e);
     return json(500, { error: FRIENDLY });
   }
@@ -697,17 +744,18 @@ export async function handlePublishDue(req: Request, env: Env): Promise<Response
   if (!env.CRON_SECRET || req.headers.get("authorization") !== `Bearer ${env.CRON_SECRET}`) return json(401, { error: "Não autorizado." });
   const sb = serviceClient(env);
   if (!sb) return json(503, { error: "Servidor sem SUPABASE_SERVICE_ROLE_KEY configurada." });
-  const broadcasts = await processBroadcasts(sb, env, 200_000).catch((e) => ({ erro: msg(e) }));
+  const broadcasts = await processBroadcasts(sb, env, 150_000).catch((e) => ({ erro: msg(e) }));
+  const sequencias = await processSequences(sb, env, 60_000).catch((e) => ({ erro: msg(e) }));
   const { data: due } = await sb.from("posts").select("id").eq("status", "agendada").lte("scheduled_at", now()).lt("attempts", 3).order("scheduled_at").limit(20);
   const results = [];
   for (const p of due ?? []) results.push({ id: p.id, ...(await publishPost(sb, env, p.id as string).catch((e) => ({ ok: false, error: msg(e) }))) });
-  return json(200, { publicadas: results.filter((r) => r.ok).length, results, disparos: broadcasts });
+  return json(200, { publicadas: results.filter((r) => r.ok).length, results, disparos: broadcasts, sequencias });
 }
 
 export { isChannel };
 
 /* ------------------------------------------------------------------ fluxos (respostas automáticas) */
-interface Flow { id: string; trigger: string; channel: string; match: string; keywords: string[]; reply: string; comment_reply: string; hours: { start?: string; end?: string; days?: number[] }; runs: number; button_label?: string | null; button_url?: string | null; media_ids?: string[]; post_id?: string | null; once_per_user?: boolean }
+interface Flow { sequence_id?: string | null; id: string; trigger: string; channel: string; match: string; keywords: string[]; reply: string; comment_reply: string; hours: { start?: string; end?: string; days?: number[] }; runs: number; button_label?: string | null; button_url?: string | null; media_ids?: string[]; post_id?: string | null; once_per_user?: boolean }
 const norm = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, " ").trim();
 const matches = (f: Flow, text: string) => {
   if (f.match === "qualquer" || !f.keywords.length) return true;
@@ -727,7 +775,7 @@ export function outsideHours(h: Flow["hours"], at = new Date()) {
 const fill = (tpl: string, vars: Record<string, string>) => tpl.replace(/\{\{\s*(nome|primeiro_nome)\s*\}\}/gi, (_, k) => vars[String(k).toLowerCase()] ?? "");
 
 async function runMessageFlows(sb: SupabaseClient, env: Env, acc: Account, convId: string, text: string) {
-  const { data: flows } = await sb.from("inbox_flows").select("id, trigger, channel, match, keywords, reply, comment_reply, hours, runs").eq("workspace_id", acc.workspace_id).eq("status", "ativo").neq("trigger", "comentario").order("created_at");
+  const { data: flows } = await sb.from("inbox_flows").select("id, trigger, channel, match, keywords, reply, comment_reply, hours, runs, sequence_id").eq("workspace_id", acc.workspace_id).eq("status", "ativo").neq("trigger", "comentario").order("created_at");
   if (!flows?.length) return;
   const { count: inbound } = await sb.from("messages").select("id", { count: "exact", head: true }).eq("conversation_id", convId).eq("direction", "in");
   const { data: conv } = await sb.from("conversations").select("contact_name").eq("id", convId).single();
@@ -735,14 +783,15 @@ async function runMessageFlows(sb: SupabaseClient, env: Env, acc: Account, convI
   const vars = { nome: name.startsWith("+") || name.startsWith("@") ? "" : name, primeiro_nome: name.startsWith("+") || name.startsWith("@") ? "" : name.split(" ")[0] };
   for (const f of flows as Flow[]) {
     if (f.channel !== "todos" && f.channel !== LABEL[acc.kind]) continue;
-    if (!f.reply.trim()) continue;
+    if (!f.reply.trim() && !f.sequence_id) continue;
     if (f.trigger === "primeira_mensagem" && (inbound ?? 0) > 1) continue;
     if (f.trigger === "fora_do_horario" && !outsideHours(f.hours)) continue;
     if (!matches(f, text)) continue;
     // não repete o mesmo fluxo na mesma conversa por 6 horas
     const { count: recent } = await sb.from("messages").select("id", { count: "exact", head: true }).eq("conversation_id", convId).eq("flow_id", f.id).gte("sent_at", new Date(Date.now() - 6 * 3_600_000).toISOString());
     if ((recent ?? 0) > 0) continue;
-    await sendToConversation({ sb, env, ws: acc.workspace_id, userId: null }, convId, fill(f.reply, vars), undefined, f.id);
+    if (f.reply.trim()) await sendToConversation({ sb, env, ws: acc.workspace_id, userId: null }, convId, fill(f.reply, vars), undefined, f.id);
+    if (f.sequence_id) await enroll(sb, acc.workspace_id, f.sequence_id, { conversationIds: [convId] }).catch((e) => console.error("inscrição na sequência:", msg(e)));
     await sb.from("inbox_flows").update({ runs: f.runs + 1, last_run_at: now() }).eq("id", f.id);
     return; // só o primeiro fluxo que combinar
   }
