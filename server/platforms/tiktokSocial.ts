@@ -9,7 +9,8 @@ import { download, http, optBool, optNum, optStr, PlatformError, sleep, type Pos
 const API = "https://open.tiktokapis.com/v2";
 /** video.list: análises dos vídeos (conexões antigas sem ela recebem aviso para reconectar). */
 const SCOPES = ["user.info.basic", "user.info.profile", "user.info.stats", "video.publish", "video.upload", "video.list"];
-const expired = (s: number, b: Record<string, unknown>) => s === 401 || (b.error as { code?: string } | undefined)?.code === "access_token_invalid";
+/** 401 por permissão faltando (scope_not_authorized) não é token expirado: pede reconexão sem derrubar a conta. */
+const expired = (s: number, b: Record<string, unknown>) => { const c = (b.error as { code?: string } | undefined)?.code; return c === "access_token_invalid" || (s === 401 && c !== "scope_not_authorized"); };
 const call = <T>(a: StoredAuth, path: string, body?: unknown) => http<T>("TikTok", `${API}${path}`, body === undefined ? { headers: { authorization: `Bearer ${a.accessToken}` } } : { method: "POST", headers: { authorization: `Bearer ${a.accessToken}`, "content-type": "application/json; charset=UTF-8" }, body: JSON.stringify(body) }, expired);
 const creds = (env: Env, a?: StoredAuth) => ({ key: a?.extra?.clientKey || env.TIKTOK_CLIENT_KEY || "", secret: a?.extra?.clientSecret || env.TIKTOK_CLIENT_SECRET || "" });
 interface Tokens { access_token: string; refresh_token: string; expires_in: number; open_id: string; scope?: string }

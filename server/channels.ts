@@ -1066,7 +1066,8 @@ const intOrNull = (v: unknown) => (v == null || !Number.isFinite(Number(v)) ? nu
 /** Busca as métricas de uma conta e grava: publicações (social_media_stats) e a foto do dia (account_stats_daily). */
 export async function syncStats(sb: SupabaseClient, env: Env, acc: Account & { detail?: Json }, auth: StoredAuth) {
   const prov = CHANNELS[acc.kind];
-  const pa = { externalId: acc.external_id, name: acc.name, detail: acc.detail ?? {} };
+  const detail = acc.detail ?? (((await sb.from("channel_accounts").select("detail").eq("id", acc.id).single()).data?.detail ?? {}) as Json);
+  const pa = { externalId: acc.external_id, name: acc.name, detail };
   let count = 0; let firstErr: unknown = null;
   if (prov?.stats) {
     try {
@@ -1086,7 +1087,10 @@ export async function syncStats(sb: SupabaseClient, env: Env, acc: Account & { d
       const st = await prov.accountStats(env, auth, pa);
       if (st && Object.values(st).some((v) => v != null)) {
         await sb.from("account_stats_daily").upsert({ channel_account_id: acc.id, day: brDay(), workspace_id: acc.workspace_id, kind: acc.kind, followers: intOrNull(st.followers), following: intOrNull(st.following), posts: intOrNull(st.posts), impressions: intOrNull(st.impressions), reach: intOrNull(st.reach), profile_views: intOrNull(st.profileViews), extra: st.extra ?? {}, updated_at: now() }, { onConflict: "channel_account_id,day" });
-        if (st.followers != null) await sb.from("channel_accounts").update({ detail: { ...(acc.detail ?? {}), seguidores: intOrNull(st.followers) } }).eq("id", acc.id);
+        if (intOrNull(st.followers) != null) {
+          const { data: cur } = await sb.from("channel_accounts").select("detail").eq("id", acc.id).single();
+          await sb.from("channel_accounts").update({ detail: { ...((cur?.detail ?? {}) as Json), seguidores: intOrNull(st.followers) } }).eq("id", acc.id);
+        }
       }
     } catch (e) { firstErr ??= e; }
   }
