@@ -109,7 +109,7 @@ export async function enroll(sb: SupabaseClient, ws: string, sequenceId: string,
   }
   let added = 0;
   for (const r of rows) { const { error } = await sb.from("sequence_enrollments").insert(r); if (!error) added++; }
-  const requested = convIds.length + new Set(phones.map((p) => p.phone)).size;
+  const requested = convIds.length + (who.phones ?? []).length;
   return { inscritos: added, ignorados: requested - added, primeiro_envio: first };
 }
 
