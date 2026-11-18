@@ -5,7 +5,7 @@
 export type Env = Record<string, string | undefined>;
 export type PlatformId = "meta" | "google" | "tiktok" | "linkedin";
 /** Redes em que o NinePro só publica (sem caixa de entrada por enquanto). */
-export type SocialId = "facebook" | "threads" | "linkedin_social" | "youtube" | "tiktok_social" | "x" | "telegram" | "discord" | "bluesky";
+export type SocialId = "facebook" | "threads" | "linkedin_social" | "youtube" | "tiktok_social" | "x" | "telegram" | "discord" | "bluesky" | "pinterest" | "google_business" | "slack";
 export type ChannelId = "whatsapp" | "instagram" | SocialId;
 export type ConnectorId = PlatformId | ChannelId;
 export type AuthMode = "app_ninepro" | "app_proprio" | "token";
@@ -63,7 +63,9 @@ export interface NChannelAccount { externalId: string; parentExternalId?: string
 
 /** O que publicar numa conta. Mídias são URLs públicas https. */
 export interface PublishMedia { url: string; type: "image" | "video" }
-export interface PublishInput { text: string; title?: string; media: PublishMedia[]; format?: string }
+/** Opções da rede (ver src/config/postOptions.ts). */
+export type NetOptions = Record<string, string | boolean | number | string[]>;
+export interface PublishInput { text: string; title?: string; media: PublishMedia[]; format?: string; options?: NetOptions }
 export interface PublishResult { id: string; permalink: string | null; aviso?: string }
 /** Conta em que se publica (linha de channel_accounts). */
 export interface PublishAccount { externalId: string; name: string; detail: Record<string, unknown> }
@@ -78,6 +80,8 @@ export interface ChannelProvider extends Connector {
   subscribe(env: Env, auth: StoredAuth, accounts: NChannelAccount[]): Promise<string | null>;
   /** Redes de publicação: publica na conta e devolve o ID e o link. */
   publish?(env: Env, auth: StoredAuth, account: PublishAccount, p: PublishInput): Promise<PublishResult>;
+  /** Comenta na publicação recém-criada (primeiro comentário). */
+  comment?(env: Env, auth: StoredAuth, account: PublishAccount, postId: string, text: string): Promise<{ id: string }>;
   limits?: SocialLimits;
   /** Sem app OAuth (só token): esconde a opção "app da sua empresa". */
   tokenOnly?: boolean;
@@ -134,3 +138,8 @@ export const isVideoUrl = (u: string) => /\.(mp4|mov|m4v|webm|avi)(\?|$)/i.test(
 export const graphemes = (s: string) => { try { return [...new Intl.Segmenter("pt", { granularity: "grapheme" }).segment(s)].length; } catch { return [...s].length; } };
 export const blob = (bytes: Uint8Array, type: string) => new Blob([bytes as BlobPart], { type });
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Leitura tipada das opções. */
+export const optStr = (o: NetOptions | undefined, k: string) => (typeof o?.[k] === "string" ? (o[k] as string) : "");
+export const optBool = (o: NetOptions | undefined, k: string) => o?.[k] === true;
+export const optList = (o: NetOptions | undefined, k: string) => (Array.isArray(o?.[k]) ? (o![k] as string[]) : []);
+export const optNum = (o: NetOptions | undefined, k: string) => (typeof o?.[k] === "number" ? (o[k] as number) : undefined);

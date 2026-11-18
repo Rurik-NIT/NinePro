@@ -96,4 +96,8 @@ export const facebookProvider: ChannelProvider = {
     const info = await call<{ permalink_url?: string }>(`${graph(env)}/${postId}?fields=permalink_url&access_token=${encodeURIComponent(token)}`).catch(() => ({ permalink_url: undefined }));
     return { id: postId, permalink: info.permalink_url ?? `https://www.facebook.com/${postId}` };
   },
+  async comment(env, auth, account, postId, text) {
+    const token = await pageToken(env, auth, account.externalId);
+    return call<{ id: string }>(`${graph(env)}/${postId}/comments`, form({ message: text, access_token: token }));
+  },
 };

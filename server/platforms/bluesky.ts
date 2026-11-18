@@ -2,7 +2,7 @@
  * Bluesky — AT Protocol. Conexão só por token: o @usuário e uma senha de app (Configurações › Senhas de app).
  * Publica texto (até 300 caracteres) com links e hashtags clicáveis, até 4 imagens ou 1 vídeo.
  */
-import { download, graphemes, http, PlatformError, type ChannelProvider, type Env, type StoredAuth } from "./types.js";
+import { download, graphemes, http, optList, PlatformError, type ChannelProvider, type Env, type StoredAuth } from "./types.js";
 
 const DEFAULT = "https://bsky.social";
 interface Session { did: string; handle: string; accessJwt: string; refreshJwt: string }
@@ -82,11 +82,21 @@ export const blueskyProvider: ChannelProvider = {
       for (const m of p.media.slice(0, 4)) images.push({ alt: "", image: await upload(m.url, 1_000_000).catch((e) => { throw new PlatformError(e instanceof PlatformError && /grande/.test(e.message) ? "Bluesky: cada imagem pode ter até 1 MB. Envie uma versão menor." : (e as Error).message); }) });
       embed = { $type: "app.bsky.embed.images", images };
     }
-    const f = facets(text);
-    const record = { $type: "app.bsky.feed.post", text, createdAt: new Date().toISOString(), langs: ["pt"], ...(f.length ? { facets: f } : {}), ...(embed ? { embed } : {}) };
-    const r = await xrpc<{ uri: string; cid: string }>(service, "com.atproto.repo.createRecord", { method: "POST", headers: { ...bearer(auth), "content-type": "application/json" }, body: JSON.stringify({ repo: auth.extra?.did, collection: "app.bsky.feed.post", record }) });
+    const langs = optList(p.options, "idiomas").filter((l) => /^[a-z]{2,3}(-[A-Z]{2})?$/.test(l)).slice(0, 3);
+    const create = (t: string, extra: Record<string, unknown>) => {
+      const f = facets(t);
+      const record = { $type: "app.bsky.feed.post", text: t, createdAt: new Date().toISOString(), langs: langs.length ? langs : ["pt"], ...(f.length ? { facets: f } : {}), ...extra };
+      return xrpc<{ uri: string; cid: string }>(service, "com.atproto.repo.createRecord", { method: "POST", headers: { ...bearer(auth), "content-type": "application/json" }, body: JSON.stringify({ repo: auth.extra?.did, collection: "app.bsky.feed.post", record }) });
+    };
+    const r = await create(text, embed ? { embed } : {});
     const rkey = r.uri.split("/").pop()!;
     const handle = String(account.detail.usuario ?? auth.extra?.handle ?? "");
-    return { id: r.uri, permalink: handle ? `https://bsky.app/profile/${handle}/post/${rkey}` : null };
+    let parent = r; let aviso: string | undefined;
+    for (const [i, t] of optList(p.options, "thread").entries()) {
+      if (graphemes(t) > 300) { aviso = `Thread parou no item ${i + 1}: mais de 300 caracteres.`; break; }
+      try { parent = await create(t, { reply: { root: { uri: r.uri, cid: r.cid }, parent: { uri: parent.uri, cid: parent.cid } } }); }
+      catch (e) { aviso = `Thread parou no item ${i + 1}: ${(e as Error).message}`; break; }
+    }
+    return { id: r.uri, permalink: handle ? `https://bsky.app/profile/${handle}/post/${rkey}` : null, aviso };
   },
 };

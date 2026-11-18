@@ -2,7 +2,10 @@
  * Telegram — Bot API. Publica em canais e grupos onde o bot é administrador.
  * Conexão só por token: o token do bot (BotFather) e os canais (@canal ou ID -100…).
  */
-import { blob, download, http, PlatformError, type ChannelProvider, type PublishInput, type StoredAuth } from "./types.js";
+import { blob, download, http, optBool, optStr, PlatformError, type ChannelProvider, type NetOptions, type PublishInput, type StoredAuth } from "./types.js";
+
+/** Opções comuns a todo envio (formatação, notificação, proteção). */
+const sendOpts = (o?: NetOptions) => { const pm = optStr(o, "formatacao"); return { ...(pm && pm !== "nenhuma" ? { parse_mode: pm } : {}), ...(optBool(o, "silencioso") ? { disable_notification: true } : {}), ...(optBool(o, "proteger") ? { protect_content: true } : {}) }; };
 
 const api = (t: string) => `https://api.telegram.org/bot${t}`;
 const tokenOf = (a: StoredAuth) => { if (!a.accessToken) throw new PlatformError("Telegram: conexão sem token do bot.", true); return a.accessToken; };
@@ -18,17 +21,18 @@ interface Msg { message_id: number; chat: Chat }
 const link = (chat: Record<string, unknown>, id: number) => (chat.usuario ? `https://t.me/${String(chat.usuario)}/${id}` : null);
 
 /** Envia a mídia pelo link; se o Telegram não conseguir buscar (arquivo grande), envia o arquivo. */
-async function sendOne(token: string, chat: string, m: PublishInput["media"][number], caption?: string): Promise<Msg> {
+async function sendOne(token: string, chat: string, m: PublishInput["media"][number], caption?: string, extra: Record<string, unknown> = {}): Promise<Msg> {
   const method = m.type === "video" ? "sendVideo" : "sendPhoto";
   const field = m.type === "video" ? "video" : "photo";
   try {
-    return await tg<Msg>(token, method, { chat_id: chat, [field]: m.url, ...(caption ? { caption } : {}), ...(m.type === "video" ? { supports_streaming: true } : {}) });
+    return await tg<Msg>(token, method, { chat_id: chat, [field]: m.url, ...(caption ? { caption } : {}), ...(m.type === "video" ? { supports_streaming: true } : {}), ...extra });
   } catch (e) {
     if (!(e instanceof PlatformError) || e.expired) throw e;
     const f = await download("Telegram", m.url, 50_000_000);
     const fd = new FormData();
     fd.set("chat_id", chat); if (caption) fd.set("caption", caption);
     if (m.type === "video") fd.set("supports_streaming", "true");
+    for (const [k, v] of Object.entries(extra)) fd.set(k, String(v));
     fd.set(field, blob(f.bytes, f.type), f.name);
     return tg<Msg>(token, method, fd);
   }
@@ -81,19 +85,22 @@ export const telegramProvider: ChannelProvider = {
     const token = tokenOf(auth);
     const chat = account.externalId;
     const text = p.text.trim();
+    const extra = sendOpts(p.options);
+    const preview = optBool(p.options, "sem_previa_de_link") ? { link_preview_options: { is_disabled: true } } : {};
     if (!p.media.length) {
-      const m = await tg<Msg>(token, "sendMessage", { chat_id: chat, text });
+      const m = await tg<Msg>(token, "sendMessage", { chat_id: chat, text, ...extra, ...preview });
       return { id: String(m.message_id), permalink: link(account.detail, m.message_id) };
     }
     // legenda vai até 1.024 caracteres; texto maior segue numa mensagem logo depois
     const caption = text.length <= 1024 ? text : "";
     let first: Msg;
-    if (p.media.length === 1) first = await sendOne(token, chat, p.media[0], caption || undefined);
+    if (p.media.length === 1) first = await sendOne(token, chat, p.media[0], caption || undefined, extra);
     else {
-      const group = p.media.slice(0, 10).map((m, i) => ({ type: m.type === "video" ? "video" : "photo", media: m.url, ...(i === 0 && caption ? { caption } : {}) }));
-      first = (await tg<Msg[]>(token, "sendMediaGroup", { chat_id: chat, media: group }))[0];
+      const { parse_mode, ...rest } = extra as { parse_mode?: string };
+      const group = p.media.slice(0, 10).map((m, i) => ({ type: m.type === "video" ? "video" : "photo", media: m.url, ...(i === 0 && caption ? { caption, ...(parse_mode ? { parse_mode } : {}) } : {}) }));
+      first = (await tg<Msg[]>(token, "sendMediaGroup", { chat_id: chat, media: group, ...rest }))[0];
     }
-    if (!caption && text) await tg<Msg>(token, "sendMessage", { chat_id: chat, text });
+    if (!caption && text) await tg<Msg>(token, "sendMessage", { chat_id: chat, text, ...extra, ...preview });
     return { id: String(first.message_id), permalink: link(account.detail, first.message_id) };
   },
 };

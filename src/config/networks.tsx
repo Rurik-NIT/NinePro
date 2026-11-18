@@ -1,11 +1,11 @@
-import { AtSign, Cloud, Facebook, Instagram, Linkedin, MessageCircle, MessagesSquare, Music2, Send, Twitter, Youtube } from "lucide-react";
+import { AtSign, Cloud, Facebook, Instagram, Linkedin, MapPin, MessageCircle, MessagesSquare, Music2, Pin, Send, Slack, Twitter, Youtube } from "lucide-react";
 
 /** Canais e redes de publicação (espelho de server/platforms → CHANNELS). */
-export type ChannelKind = "whatsapp" | "instagram" | "facebook" | "threads" | "linkedin_social" | "youtube" | "tiktok_social" | "x" | "telegram" | "discord" | "bluesky";
-export const SOCIAL_KINDS: ChannelKind[] = ["facebook", "threads", "linkedin_social", "youtube", "tiktok_social", "x", "telegram", "discord", "bluesky"];
+export type ChannelKind = "whatsapp" | "instagram" | "facebook" | "threads" | "linkedin_social" | "youtube" | "tiktok_social" | "x" | "telegram" | "discord" | "bluesky" | "pinterest" | "google_business" | "slack";
+export const SOCIAL_KINDS: ChannelKind[] = ["facebook", "threads", "linkedin_social", "youtube", "tiktok_social", "x", "pinterest", "google_business", "telegram", "discord", "slack", "bluesky"];
 export const PUBLISH_KINDS: ChannelKind[] = ["instagram", ...SOCIAL_KINDS];
 
-export interface NetLimits { text: number; images: number; videos: number; textOnly: boolean; mixed: boolean; needsVideo?: boolean; needsTitle?: boolean }
+export interface NetLimits { text: number; images: number; videos: number; textOnly: boolean; mixed: boolean; needsVideo?: boolean; needsTitle?: boolean; titleMax?: number }
 interface Net { label: string; icon: JSX.Element; does: string[]; limits?: NetLimits }
 export const NETWORK: Record<ChannelKind, Net> = {
   whatsapp: { label: "WhatsApp", icon: <MessageCircle />, does: ["Mensagens recebidas", "Respostas", "Modelos", "Status de entrega"] },
@@ -18,7 +18,10 @@ export const NETWORK: Record<ChannelKind, Net> = {
   x: { label: "X (Twitter)", icon: <Twitter />, does: ["Publicar posts", "Até 4 fotos ou 1 vídeo", "Agendar"], limits: { text: 280, images: 4, videos: 1, textOnly: true, mixed: false } },
   telegram: { label: "Telegram", icon: <Send />, does: ["Publicar em canais e grupos", "Fotos e vídeos", "Agendar"], limits: { text: 4096, images: 10, videos: 10, textOnly: true, mixed: true } },
   discord: { label: "Discord", icon: <MessagesSquare />, does: ["Publicar em canais", "Imagens e vídeo", "Agendar"], limits: { text: 2000, images: 10, videos: 1, textOnly: true, mixed: true } },
-  bluesky: { label: "Bluesky", icon: <Cloud />, does: ["Publicar posts", "Links e hashtags clicáveis", "Até 4 fotos ou 1 vídeo"], limits: { text: 300, images: 4, videos: 1, textOnly: true, mixed: false } },
+  bluesky: { label: "Bluesky", icon: <Cloud />, does: ["Publicar posts", "Links e hashtags clicáveis", "Threads"], limits: { text: 300, images: 4, videos: 1, textOnly: true, mixed: false } },
+  pinterest: { label: "Pinterest", icon: <Pin />, does: ["Pins de imagem e vídeo", "Escolher a pasta", "Link de destino"], limits: { text: 800, images: 5, videos: 1, textOnly: false, mixed: false, titleMax: 100 } },
+  google_business: { label: "Google Meu Negócio", icon: <MapPin />, does: ["Novidades no perfil da empresa", "Eventos e ofertas", "Botão de ação"], limits: { text: 1500, images: 1, videos: 0, textOnly: true, mixed: false } },
+  slack: { label: "Slack", icon: <Slack />, does: ["Mensagens em canais", "Imagens, vídeos e arquivos", "Agendar"], limits: { text: 40000, images: 10, videos: 10, textOnly: true, mixed: true } },
 };
 export const graphemeCount = (s: string) => { try { return [...new Intl.Segmenter("pt", { granularity: "grapheme" }).segment(s)].length; } catch { return [...s].length; } };
 export const isVideo = (u: string) => /\.(mp4|mov|m4v|webm|avi)(\?|$)/i.test(u);
@@ -36,7 +39,7 @@ export function checkDraft(kinds: ChannelKind[], d: { text: string; title?: stri
     if (!d.media.length && !text) problemas.push(`${name}: escreva um texto ou adicione mídia.`);
     if (l.needsVideo && !vids && d.media.length) problemas.push(`${name}: precisa de um vídeo.`);
     if (!l.images && imgs) problemas.push(`${name}: não aceita imagens.`);
-    if (vids > l.videos) problemas.push(`${name}: no máximo ${l.videos} vídeo(s).`);
+    if (vids > l.videos) problemas.push(l.videos ? `${name}: no máximo ${l.videos} vídeo(s).` : `${name}: não aceita vídeo.`);
     if (imgs && vids && !l.mixed) problemas.push(`${name}: não mistura fotos e vídeo.`);
     if (l.needsTitle && !(d.title?.trim() || text)) problemas.push(`${name}: informe o título.`);
   }

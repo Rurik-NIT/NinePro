@@ -11,7 +11,11 @@ export const WEBHOOK_EVENTS = [
   { id: "mensagem.recebida", label: "Mensagem recebida (WhatsApp ou Instagram)" },
   { id: "mensagem.enviada", label: "Mensagem enviada pela equipe ou por um agente" },
   { id: "comentario.recebido", label: "Comentário ou menção no Instagram" },
-  { id: "publicacao.publicada", label: "Publicação feita no Instagram" },
+  { id: "publicacao.publicada", label: "Publicação feita (uma ou mais redes)" },
   { id: "publicacao.falhou", label: "Publicação não pôde ser feita" },
+  { id: "publicacao.aguardando_aprovacao", label: "Publicação enviada para aprovação" },
+  { id: "publicacao.aprovada", label: "Publicação aprovada" },
+  { id: "publicacao.rejeitada", label: "Publicação rejeitada (voltou para rascunho)" },
+  { id: "publicacao.reciclada", label: "Publicação reciclada (nova data agendada)" },
 ] as const;
 export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number]["id"] | "webhook.teste";

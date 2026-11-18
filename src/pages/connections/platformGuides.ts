@@ -1,5 +1,5 @@
 /** Textos de ajuda de cada plataforma no modal de conexão (o que fazer em cada site). */
-export type PlatformKey = "meta" | "google" | "tiktok" | "linkedin" | "whatsapp" | "instagram" | "facebook" | "threads" | "linkedin_social" | "youtube" | "tiktok_social" | "x" | "telegram" | "discord" | "bluesky";
+export type PlatformKey = "meta" | "google" | "tiktok" | "linkedin" | "whatsapp" | "instagram" | "facebook" | "threads" | "linkedin_social" | "youtube" | "tiktok_social" | "x" | "telegram" | "discord" | "bluesky" | "pinterest" | "google_business" | "slack";
 
 interface Guide {
   label: string;
@@ -214,5 +214,40 @@ export const PLATFORM_GUIDE: Record<PlatformKey, Guide> = {
     tokenDesc: "Seu usuário e uma senha de app (não a senha da conta).",
     appSteps: [],
     tokenSteps: ["No Bluesky: Configurações › Privacidade e segurança › Senhas de app › Adicionar senha de app.", "Copie a senha gerada e informe abaixo com o seu usuário."],
+  },
+  pinterest: {
+    label: "Pinterest", site: "o Pinterest", loginLabel: "Entrar com Pinterest",
+    appDesc: "Use o app da sua empresa em developers.pinterest.com.",
+    tokenDesc: "App ID, chave secreta e um refresh token gerado pelo seu app.",
+    appSteps: [
+      "Em developers.pinterest.com › My apps, crie ou abra o app (conta Business).",
+      "Em Redirect URIs, cole o endereço abaixo e salve.",
+      "Copie o App ID e a App secret key.",
+    ],
+    tokenSteps: ["Faça o login OAuth do seu app com os escopos boards:read, boards:write, pins:read, pins:write e user_accounts:read.", "Copie o refresh token (vale 1 ano) e informe abaixo com o App ID e a chave."],
+    note: () => "Apps em Trial access publicam pins visíveis só para a própria conta até o Pinterest liberar o acesso padrão.",
+  },
+  google_business: {
+    label: "Google Meu Negócio", site: "o Google", loginLabel: "Entrar com Google",
+    appDesc: "Use um cliente OAuth do Google Cloud com as APIs do Business Profile liberadas.",
+    tokenDesc: "ID do cliente, chave secreta e refresh token com o escopo business.manage.",
+    appSteps: [
+      "No Google Cloud, ative My Business Account Management, My Business Business Information e Google My Business API.",
+      "Em APIs e serviços › Credenciais, crie um cliente OAuth (Aplicativo da Web) e cole o endereço abaixo em URIs de redirecionamento.",
+      "Copie o ID do cliente e a chave secreta.",
+    ],
+    tokenSteps: ["No OAuth Playground, use o seu cliente com o escopo https://www.googleapis.com/auth/business.manage.", "Troque o código pelo refresh token e informe abaixo com o ID e a chave do cliente."],
+    note: () => "O Google libera as APIs do Business Profile por pedido: até a aprovação, a cota do projeto é zero e a publicação falha com aviso.",
+  },
+  slack: {
+    label: "Slack", site: "o Slack", loginLabel: "Adicionar ao Slack",
+    appDesc: "Use o app da sua empresa em api.slack.com/apps.",
+    tokenDesc: "Token do bot (xoxb-…) do app instalado no workspace.",
+    appSteps: [
+      "Em api.slack.com/apps, crie ou abra o app.",
+      "Em OAuth & Permissions, adicione os Bot Token Scopes chat:write, chat:write.public, channels:read, groups:read e files:write.",
+      "Em Redirect URLs, cole o endereço abaixo. Depois copie o Client ID e o Client Secret em Basic Information.",
+    ],
+    tokenSteps: ["Em OAuth & Permissions, com os escopos chat:write, chat:write.public, channels:read, groups:read e files:write, instale o app no workspace.", "Copie o Bot User OAuth Token (xoxb-…) e cole abaixo. Para canais privados, convide o app no canal (/invite)."],
   },
 };

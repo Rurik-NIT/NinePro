@@ -1,4 +1,4 @@
-import { CalendarClock, Cable, ExternalLink, FileText, ImagePlus, Instagram, Link2, MessageCircle, Plus, Send, Trash2, Upload, X } from "lucide-react";
+import { CalendarClock, Cable, Check, Clock, ExternalLink, FileText, FileUp, ImagePlus, Instagram, Link2, MessageCircle, Plus, Repeat, Send, ShieldCheck, Trash2, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
@@ -16,6 +16,8 @@ import { useToast } from "@/components/ui/Toast";
 import { EmptyState, InlineNotice, LoadingState } from "@/components/feedback/States";
 import { ListScreen } from "@/components/templates/ListScreen";
 import { checkDraft, graphemeCount, isVideo, NETWORK, PUBLISH_KINDS } from "@/config/networks";
+import { checkOptions, type PostOptions } from "@/config/postOptions";
+import { ApprovalPolicyModal, emptyRecycling, ImportCsvModal, NetworkOptions, PerNetworkTimes, POLICY_LABEL, RecyclingFields, recyclingPayload, RejectModal, tidyOptions, useApprovalPolicy, type RecyclingDraft } from "./PostExtras";
 import { bodyOf, CATEGORY_LABEL, SendTemplateModal, TEMPLATE_COLS, TEMPLATE_STATUS, useChannelAccounts, varsOf, type WaTemplate } from "./shared";
 
 const connectLink = (label = "Conectar") => <Link to="/conexoes" className={buttonClasses("primary")}><Cable className="size-4" />{label}</Link>;
@@ -140,16 +142,20 @@ function CreateTemplateModal({ open, onOpenChange, ws, numbers, onCreated }: { o
 }
 
 /* ------------------------------------------------------------------ Publicações (Instagram) */
-interface Post { id: string; content: string; title: string | null; custom: Record<string, string> | null; status: "agendada" | "publicada" | "parcial" | "rascunho" | "falhou" | "aguardando_aprovacao"; scheduled_at: string | null; published_at: string | null; created_at: string; channel_account_ids: string[]; media_urls: string[]; media_type: string; result: Record<string, { id?: string; permalink?: string | null; erro?: string; aviso?: string; conta: string; rede?: string }>; error: string | null }
+interface Post { id: string; content: string; title: string | null; custom: Record<string, string> | null; status: "agendada" | "publicada" | "parcial" | "rascunho" | "falhou" | "aguardando_aprovacao"; scheduled_at: string | null; published_at: string | null; created_at: string; channel_account_ids: string[]; media_urls: string[]; media_type: string; result: Record<string, { id?: string; permalink?: string | null; erro?: string; aviso?: string; conta: string; rede?: string; pendente?: string }>; error: string | null; options?: PostOptions | null; times?: Record<string, string> | null; recycling?: { a_cada_dias: number; vezes?: number; variacoes?: string[] } | null; recycled_from?: string | null; recycle_count?: number; review_note?: string | null; source?: string | null }
 const POST_STATUS: Record<Post["status"], { label: string; tone: "positive" | "info" | "neutral" | "negative" | "warning" }> = { publicada: { label: "Publicada", tone: "positive" }, parcial: { label: "Parcial", tone: "warning" }, agendada: { label: "Agendada", tone: "info" }, rascunho: { label: "Rascunho", tone: "neutral" }, falhou: { label: "Falhou", tone: "negative" }, aguardando_aprovacao: { label: "Aguardando aprovação", tone: "warning" } };
 const TYPE_LABEL: Record<string, string> = { IMAGE: "Imagem", CAROUSEL: "Carrossel", REELS: "Vídeo", VIDEO: "Vídeo", STORIES: "Story" };
 
 export function LivePosts() {
   const toast = useToast();
-  const { accounts, ws } = useChannelAccounts(PUBLISH_KINDS);
+  const { accounts, ws, admin } = useChannelAccounts(PUBLISH_KINDS);
   const [rows, setRows] = useState<Post[] | null>(null);
   const [editing, setEditing] = useState<Post | "novo" | null>(null);
   const [deleting, setDeleting] = useState<Post | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [policyOpen, setPolicyOpen] = useState(false);
+  const [rejecting, setRejecting] = useState<Post | null>(null);
+  const [policy, setPolicy] = useApprovalPolicy(ws);
   const load = useCallback(async () => {
     if (!supabase || !ws) return;
     const { data } = await supabase.from("posts").select("*").eq("workspace_id", ws).order("created_at", { ascending: false }).limit(300);
@@ -163,31 +169,44 @@ export function LivePosts() {
     } catch (e) { toast({ tone: "error", title: "A publicação falhou", description: e instanceof Error ? e.message : String(e) }); }
     await load();
   };
+  const review = async (p: Post, approve: boolean, note?: string) => {
+    try {
+      const r = await channelCall<{ ok: boolean; status: string; error?: string | null; agendada_para?: string }>({ action: "post_review", workspaceId: ws, postId: p.id, approve, note });
+      toast(!approve ? { tone: "success", title: "Publicação rejeitada", description: "Voltou para rascunho com o motivo." } : r.status === "agendada" ? { tone: "success", title: "Aprovada e agendada", description: r.agendada_para ? formatDateTime(new Date(r.agendada_para)) : undefined } : r.status === "publicada" ? { tone: "success", title: "Aprovada e publicada" } : r.ok ? { tone: "warning", title: "Aprovada; publicada em parte das redes", description: r.error ?? undefined } : { tone: "error", title: "Aprovada, mas a publicação falhou", description: r.error ?? undefined });
+    } catch (e) { toast({ tone: "error", title: "Não foi possível concluir", description: e instanceof Error ? e.message : String(e) }); }
+    await load();
+  };
   if (accounts === null || rows === null) return <Page><PageHeader title="Publicações" /><LoadingState /></Page>;
   const acc = (id: string) => accounts.find((a) => a.id === id);
   return (
     <>
-      <ListScreen<Post> demo={false} title="Publicações" description="Publique agora ou agende em várias redes de uma vez: Instagram, Facebook, Threads, LinkedIn, YouTube, TikTok, X, Telegram, Discord e Bluesky."
+      <ListScreen<Post> demo={false} title="Publicações" description={`Publique agora, agende ou mande para a fila em várias redes de uma vez.${policy !== "nenhuma" ? ` Aprovação: ${POLICY_LABEL[policy].toLowerCase()}.` : ""}`}
         rows={rows} getId={(p) => p.id} searchText={(p) => `${p.content} ${p.title ?? ""}`} refreshable onRefresh={load}
         filters={[{ id: "s", label: "Status", options: Object.entries(POST_STATUS).map(([value, v]) => ({ value, label: v.label })), match: (p, v) => p.status === v }]}
-        actions={accounts.length ? <Button variant="primary" icon={<Plus />} onClick={() => setEditing("novo")}>Nova publicação</Button> : connectLink("Conectar redes")}
+        actions={accounts.length ? <>{admin && <Button icon={<ShieldCheck />} onClick={() => setPolicyOpen(true)}>Aprovação</Button>}<Button icon={<FileUp />} onClick={() => setImporting(true)}>Importar CSV</Button><Button variant="primary" icon={<Plus />} onClick={() => setEditing("novo")}>Nova publicação</Button></> : connectLink("Conectar redes")}
         defaultSort={{ id: "at", dir: "desc" }}
         columns={[
           { id: "t", header: "Publicação", sticky: true, cell: (p) => (
             <div className="flex max-w-[460px] items-center gap-3">
               {p.media_urls[0] && (isVideo(p.media_urls[0]) ? <span className="grid size-11 shrink-0 place-items-center rounded bg-surface-2 t-caption">vídeo</span> : <img src={p.media_urls[0]} alt="" className="size-11 shrink-0 rounded object-cover" />)}
-              <div className="flex min-w-0 flex-col gap-0.5"><span className="line-clamp-2 whitespace-normal font-semibold">{p.title || p.content || "(sem texto)"}</span>{p.error && <span className="whitespace-normal text-[12px] text-negative">{p.error}</span>}</div>
+              <div className="flex min-w-0 flex-col gap-0.5"><span className="line-clamp-2 whitespace-normal font-semibold">{p.title || p.content || "(sem texto)"}</span>{p.error && <span className="whitespace-normal text-[12px] text-negative">{p.error}</span>}{p.review_note && p.status === "rascunho" && <span className="whitespace-normal text-[12px] text-warning">Rejeitada: {p.review_note}</span>}
+                {(p.recycling || p.recycled_from || p.source === "agente" || p.source === "api") && <span className="flex flex-wrap gap-1">{p.recycling && <Tag><Repeat className="size-3" />{p.recycled_from ? `Reciclada · ${p.recycle_count ?? 1}ª vez` : `Recicla a cada ${p.recycling.a_cada_dias} dia(s)`}</Tag>}{(p.source === "agente" || p.source === "api") && <Tag tone="info">{p.source === "agente" ? "Agente de IA" : "API"}</Tag>}</span>}</div>
             </div>) },
           { id: "tp", header: "Formato", cell: (p) => <Tag>{p.media_urls.length ? `${TYPE_LABEL[p.media_type] ?? p.media_type}${p.media_urls.length > 1 ? ` · ${p.media_urls.length}` : ""}` : "Texto"}</Tag> },
           { id: "c", header: "Redes", cell: (p) => <span className="flex flex-wrap gap-1">{p.channel_account_ids.map((id) => {
             const a = acc(id); const r = p.result?.[id];
             const label = <span className="inline-flex items-center gap-1 [&_svg]:size-3">{a ? NETWORK[a.kind].icon : null}{a?.name ?? r?.conta ?? "conta removida"}</span>;
             return r?.permalink ? <a key={id} href={r.permalink} target="_blank" rel="noreferrer" title={r.aviso} className="inline-flex items-center gap-1 text-accent-text hover:underline">{label}<ExternalLink className="size-3" /></a>
+              : r?.pendente ? <Tag key={id} tone="info"><span title={`Agendada para ${formatDateTime(new Date(r.pendente))}`} className="inline-flex items-center gap-1">{label}<Clock className="size-3" /></span></Tag>
               : <Tag key={id} tone={r?.erro ? "negative" : undefined}>{label}</Tag>;
           })}</span> },
           { id: "s", header: "Status", cell: (p) => <StatusBadge tone={POST_STATUS[p.status]?.tone ?? "neutral"}>{POST_STATUS[p.status]?.label ?? p.status}</StatusBadge> },
           { id: "at", header: "Quando", align: "right", sortValue: (p) => Date.parse(p.published_at ?? p.scheduled_at ?? p.created_at), cell: (p) => <span className="text-text-soft">{p.published_at ? formatDateTime(new Date(p.published_at)) : p.scheduled_at ? formatDateTime(new Date(p.scheduled_at)) : "—"}</span> },
-          { id: "a", header: "", align: "right", cell: (p) => p.status === "publicada" ? null : p.status === "parcial" ? <Button size="sm" icon={<Send />} onClick={() => void publishNow(p)}>Tentar as que falharam</Button> : (
+          { id: "a", header: "", align: "right", cell: (p) => p.status === "publicada" ? null : p.status === "aguardando_aprovacao" ? (
+            <span className="flex justify-end gap-1">
+              {admin ? <><Button size="sm" variant="primary" icon={<Check />} onClick={() => void review(p, true)}>Aprovar</Button><Button size="sm" onClick={() => setRejecting(p)}>Rejeitar</Button></> : <span className="t-caption">Aguardando um administrador</span>}
+              <Button size="sm" onClick={() => setEditing(p)}>Editar</Button>
+            </span>) : p.status === "parcial" ? <Button size="sm" icon={<Send />} onClick={() => void publishNow(p)}>Tentar as que falharam</Button> : (
             <span className="flex justify-end gap-1">
               <Button size="sm" onClick={() => setEditing(p)}>Editar</Button>
               {p.status !== "agendada" && <Button size="sm" icon={<Send />} onClick={() => void publishNow(p)}>Publicar</Button>}
@@ -196,7 +215,10 @@ export function LivePosts() {
         ]}
         empty={accounts.length ? { icon: <ImagePlus />, title: "Nenhuma publicação ainda", description: "Crie a primeira: escolha as redes, envie a imagem ou o vídeo e publique agora ou agende.", action: <Button variant="primary" icon={<Plus />} onClick={() => setEditing("novo")}>Nova publicação</Button> }
           : { icon: <Instagram />, title: "Nenhuma rede conectada", description: "Conecte o Instagram e as outras redes em Conexões para publicar e agendar daqui.", action: connectLink("Conectar redes") }} />
-      {ws && <Composer post={editing} onOpenChange={(o) => !o && setEditing(null)} ws={ws} accounts={accounts} onSaved={load} />}
+      {ws && <Composer post={editing} onOpenChange={(o) => !o && setEditing(null)} ws={ws} accounts={accounts} onSaved={load} policy={policy} admin={admin} />}
+      {ws && <ImportCsvModal open={importing} onOpenChange={setImporting} ws={ws} onDone={load} />}
+      {ws && <ApprovalPolicyModal open={policyOpen} onOpenChange={setPolicyOpen} ws={ws} policy={policy} onSaved={setPolicy} />}
+      <RejectModal open={!!rejecting} onOpenChange={(o) => !o && setRejecting(null)} onConfirm={async (note) => { if (rejecting) await review(rejecting, false, note); }} />
       <ConfirmDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)} title="Excluir publicação?" confirmLabel="Excluir" description="Ela sai da lista e, se estava agendada, não será publicada."
         onConfirm={async () => { try { await channelCall({ action: "post_delete", workspaceId: ws, postId: deleting?.id }); await load(); } catch (e) { toast({ tone: "error", title: "Não foi possível excluir", description: e instanceof Error ? e.message : String(e) }); } }} />
     </>
@@ -217,7 +239,7 @@ async function toJpeg(file: File): Promise<Blob> {
 }
 const localInput = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 
-function Composer({ post, onOpenChange, ws, accounts, onSaved }: { post: Post | "novo" | null; onOpenChange: (o: boolean) => void; ws: string; accounts: ChannelAccount[]; onSaved: () => void }) {
+function Composer({ post, onOpenChange, ws, accounts, onSaved, policy, admin }: { post: Post | "novo" | null; onOpenChange: (o: boolean) => void; ws: string; accounts: ChannelAccount[]; onSaved: () => void; policy: string; admin: boolean }) {
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
   const [selected, setSelected] = useState<string[]>([]);
@@ -231,6 +253,11 @@ function Composer({ post, onOpenChange, ws, accounts, onSaved }: { post: Post | 
   const [nextSlot, setNextSlot] = useState<string | null | undefined>(undefined);
   const [checks, setChecks] = useState<Record<string, { valido: boolean; erro?: string; redes?: Record<string, { ok: boolean; motivos: string[] }> }>>({});
   const [when, setWhen] = useState("");
+  const [options, setOptions] = useState<PostOptions>({});
+  const [ownTimes, setOwnTimes] = useState(false);
+  const [times, setTimes] = useState<Record<string, string>>({});
+  const [recycling, setRecycling] = useState<RecyclingDraft>(emptyRecycling);
+  const [askApproval, setAskApproval] = useState(false);
   const [url, setUrl] = useState("");
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -244,6 +271,11 @@ function Composer({ post, onOpenChange, ws, accounts, onSaved }: { post: Post | 
     setMode(p?.status === "agendada" ? "agendar" : p ? "rascunho" : "agora");
     setWhen(p?.scheduled_at ? localInput(new Date(p.scheduled_at)) : localInput(new Date(Date.now() + 3600_000)));
     setUrl(""); setError(null);
+    setOptions(p?.options ?? {});
+    const t = Object.fromEntries(Object.entries(p?.times ?? {}).map(([k, v]) => [k, localInput(new Date(v))]));
+    setTimes(t); setOwnTimes(Object.keys(t).length > 0);
+    setRecycling(p?.recycling ? { on: true, dias: String(p.recycling.a_cada_dias), vezes: p.recycling.vezes ? String(p.recycling.vezes) : "", variacoes: p.recycling.variacoes ?? [] } : emptyRecycling);
+    setAskApproval(false);
   }, [post, accounts]);
 
   const kinds = [...new Set(accounts.filter((a) => selected.includes(a.id)).map((a) => a.kind))];
@@ -286,13 +318,19 @@ function Composer({ post, onOpenChange, ws, accounts, onSaved }: { post: Post | 
   const hasVideo = media.some(isVideo);
   const mediaType = type === "STORIES" ? "STORIES" : media.length > 1 ? "CAROUSEL" : type === "REELS" || hasVideo ? "REELS" : "IMAGE";
   const customUsed = perNetwork ? custom : {};
-  const problems = mode === "rascunho" ? [] : checkDraft(kinds, { text: content, title, custom: customUsed, media });
-  const valid = mode === "rascunho" ? content.trim().length > 0 || media.length > 0 : selected.length > 0 && !problems.length && (mode !== "agendar" || !!when) && (mode !== "fila" || !!nextSlot);
+  const optionsUsed = tidyOptions(options, kinds);
+  const problems = mode === "rascunho" ? [] : [...new Set([...checkDraft(kinds, { text: content, title, custom: customUsed, media }), ...kinds.flatMap((k) => checkOptions(k, optionsUsed[k as keyof PostOptions], { media: media.length, hasVideo: media.some(isVideo), label: NETWORK[k].label }))])];
+  const timesUsed = ownTimes && (mode === "agendar" || mode === "agora") ? Object.fromEntries(Object.entries(times).filter(([k, v]) => v && kinds.includes(k as never)).map(([k, v]) => [k, new Date(v).toISOString()])) : {};
+  const policyNeeds = policy === "todos" || (policy === "membros" && !admin);
+  const needsApproval = mode !== "rascunho" && (askApproval || policyNeeds);
+  const valid = mode === "rascunho" ? content.trim().length > 0 || media.length > 0 : selected.length > 0 && !problems.length && (mode !== "agendar" || !!when || (kinds.length > 0 && kinds.every((k) => timesUsed[k]))) && (mode !== "fila" || !!nextSlot);
 
   const submit = async () => {
     setBusy(true); setError(null);
     try {
-      const r = await channelCall<{ ok: boolean; status: string; error?: string | null; agendada_para?: string }>({ action: "post_save", workspaceId: ws, id: post && post !== "novo" ? post.id : undefined, content, title: title.trim() || undefined, custom: customUsed, accountIds: selected, mediaUrls: media, mediaType, mode, scheduledAt: mode === "agendar" ? new Date(when).toISOString() : undefined });
+      const r = await channelCall<{ ok: boolean; status: string; error?: string | null; agendada_para?: string; aguardando_aprovacao?: boolean; proxima?: string }>({ action: "post_save", workspaceId: ws, id: post && post !== "novo" ? post.id : undefined, content, title: title.trim() || undefined, custom: customUsed, accountIds: selected, mediaUrls: media, mediaType, mode, scheduledAt: mode === "agendar" && when ? new Date(when).toISOString() : undefined, options: optionsUsed, times: timesUsed, recycling: recyclingPayload(recycling), requiresApproval: askApproval });
+      if (r.aguardando_aprovacao) { toast({ tone: "success", title: "Enviada para aprovação", description: "Um administrador precisa aprovar antes de publicar." }); onOpenChange(false); onSaved(); setBusy(false); return; }
+      if (mode === "agora" && r.status === "agendada" && r.proxima) { toast({ tone: "success", title: "Publicado nas redes de agora", description: `As outras saem no horário próprio (próximo: ${formatDateTime(new Date(r.proxima))}).` }); onOpenChange(false); onSaved(); setBusy(false); return; }
       if (mode === "agora" && !r.ok) { setError(r.error ?? "A publicação falhou."); setBusy(false); onSaved(); return; }
       if (mode === "agora" && r.status === "parcial") toast({ tone: "warning", title: "Publicado em parte das redes", description: r.error ?? undefined });
       else toast({ tone: "success", title: mode === "agora" ? `Publicado em ${kinds.length} rede(s)` : mode === "fila" ? `Na fila para ${r.agendada_para ? formatDateTime(new Date(r.agendada_para)) : "o próximo horário"}` : mode === "agendar" ? "Publicação agendada" : "Rascunho salvo" });
@@ -305,7 +343,7 @@ function Composer({ post, onOpenChange, ws, accounts, onSaved }: { post: Post | 
   const maxText = Math.min(...kinds.map((k) => NETWORK[k].limits?.text ?? 63206), 63206);
   return (
     <Modal open={!!post} onOpenChange={onOpenChange} size="lg" icon={<Send />} title={post && post !== "novo" ? "Editar publicação" : "Nova publicação"}
-      footer={<><Button variant="ghost" onClick={() => onOpenChange(false)}>Cancelar</Button><Button variant="primary" loading={busy} disabled={!valid || uploading} icon={mode === "agendar" ? <CalendarClock /> : mode === "agora" ? <Send /> : undefined} onClick={() => void submit()}>{mode === "agora" ? `Publicar agora${kinds.length > 1 ? ` em ${kinds.length} redes` : ""}` : mode === "agendar" ? "Agendar" : mode === "fila" ? "Adicionar à fila" : "Salvar rascunho"}</Button></>}>
+      footer={<><Button variant="ghost" onClick={() => onOpenChange(false)}>Cancelar</Button><Button variant="primary" loading={busy} disabled={!valid || uploading} icon={mode === "agendar" ? <CalendarClock /> : mode === "agora" ? <Send /> : undefined} onClick={() => void submit()}>{needsApproval ? "Enviar para aprovação" : mode === "agora" ? `Publicar agora${kinds.length > 1 ? ` em ${kinds.length} redes` : ""}` : mode === "agendar" ? "Agendar" : mode === "fila" ? "Adicionar à fila" : "Salvar rascunho"}</Button></>}>
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
           <span className="text-secondary font-semibold text-text-soft">Onde publicar</span>
@@ -342,7 +380,7 @@ function Composer({ post, onOpenChange, ws, accounts, onSaved }: { post: Post | 
           </div>
           <span className="t-caption">Imagens são convertidas para JPEG. Instagram: de 4:5 a 1,91:1 no feed; reels e stories 9:16. YouTube e TikTok exigem vídeo; Bluesky aceita imagens de até 1 MB.</span>
         </div>
-        {kinds.includes("youtube") && <Field label="Título (YouTube)" hint={`${graphemeCount(title)}/100`}>{(p) => <Input {...p} value={title} maxLength={100} onChange={(e) => setTitle(e.target.value)} placeholder="Ex.: 3 dicas para escolher o tênis certo" />}</Field>}
+        {(kinds.includes("youtube") || kinds.includes("pinterest")) && <Field label={`Título (${kinds.filter((k) => k === "youtube" || k === "pinterest").map((k) => NETWORK[k].label).join(", ")})`} hint={`${graphemeCount(title)}/100`}>{(p) => <Input {...p} value={title} maxLength={100} onChange={(e) => setTitle(e.target.value)} placeholder="Ex.: 3 dicas para escolher o tênis certo" />}</Field>}
         {type !== "STORIES" && <Field label="Texto" hint={`${graphemeCount(content)}${kinds.length ? `/${maxText}` : ""}${kinds.length > 1 ? " (limite da rede mais curta)" : ""}`}>{(p) => <Textarea id={p.id} value={content} onChange={(e) => setContent(e.target.value)} rows={5} />}</Field>}
         {kinds.length > 1 && <Checkbox checked={perNetwork} onCheckedChange={setPerNetwork} label="Texto diferente por rede" description="Ex.: versão curta para X e Bluesky e mais longa para LinkedIn." />}
         {perNetwork && kinds.map((k) => (
@@ -353,7 +391,13 @@ function Composer({ post, onOpenChange, ws, accounts, onSaved }: { post: Post | 
           {mode === "fila" && <span className="t-caption">{nextSlot === undefined ? "Buscando o próximo horário livre…" : nextSlot ? `Entra no próximo horário livre: ${formatDateTime(new Date(nextSlot))}.` : <>Sem fila configurada ou sem horário livre. <Link to="/publicacoes/filas" className="text-accent-text hover:underline">Configurar filas →</Link></>}</span>}
           {mode === "agendar" && <Input type="datetime-local" value={when} min={localInput(new Date(Date.now() + 120_000))} onChange={(e) => setWhen(e.target.value)} className="max-w-[260px]" />}
           {mode === "agendar" && <span className="t-caption">O NinePro publica no horário escolhido (verificação a cada 5 minutos).</span>}
+          {(mode === "agendar" || mode === "agora") && kinds.length > 1 && <Checkbox checked={ownTimes} onCheckedChange={setOwnTimes} label="Horário diferente por rede" description="Ex.: LinkedIn às 8h, Instagram às 19h. Redes sem horário próprio usam o principal." />}
+          {ownTimes && (mode === "agendar" || mode === "agora") && kinds.length > 1 && <PerNetworkTimes kinds={kinds} base={mode === "agendar" ? when : ""} value={times} onChange={setTimes} />}
         </div>
+        <NetworkOptions kinds={kinds} value={options} onChange={setOptions} pinterestBoards={accounts.filter((a) => selected.includes(a.id) && a.kind === "pinterest").flatMap((a) => ((a.detail as { pastas?: { id: string; nome: string }[] } | null)?.pastas ?? []))} />
+        {mode !== "rascunho" && <RecyclingFields value={recycling} onChange={setRecycling} kinds={kinds} />}
+        {mode !== "rascunho" && (policyNeeds ? <InlineNotice tone="info">Este espaço exige aprovação: a publicação vai para um administrador aprovar antes de sair.</InlineNotice>
+          : <Checkbox checked={askApproval} onCheckedChange={setAskApproval} label="Enviar para aprovação antes de publicar" description="Um administrador revisa e aprova (ou rejeita com o motivo)." />)}
         {mediaIssues.length > 0 && <InlineNotice tone="warning"><ul className="list-disc pl-4">{mediaIssues.map((x) => <li key={x}>{x}</li>)}</ul></InlineNotice>}
         {problems.length > 0 && selected.length > 0 && <InlineNotice tone="warning"><ul className="list-disc pl-4">{problems.map((x) => <li key={x}>{x}</li>)}</ul></InlineNotice>}
         {error && <InlineNotice tone="negative">{error}</InlineNotice>}

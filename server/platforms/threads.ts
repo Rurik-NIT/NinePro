@@ -3,7 +3,7 @@
  * (caso de uso "Acessar a API do Threads" no app da Meta). Opcionais: THREADS_GRAPH_VERSION (v1.0), THREADS_SCOPES.
  * Publica texto (até 500), imagem, vídeo ou carrossel (2 a 20).
  */
-import { http, PlatformError, sleep, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
+import { http, optList, optStr, PlatformError, sleep, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
 
 const ver = (env: Env) => env.THREADS_GRAPH_VERSION || "v1.0";
 const th = (env: Env) => `https://graph.threads.net/${ver(env)}`;
@@ -74,18 +74,32 @@ export const threadsProvider: ChannelProvider = {
     };
     const text = p.text.trim();
     const item = (m: PublishInput["media"][number], carousel: boolean) => ({ media_type: m.type === "video" ? "VIDEO" : "IMAGE", [m.type === "video" ? "video_url" : "image_url"]: m.url, ...(carousel ? { is_carousel_item: "true" } : {}) });
+    const topic = optStr(p.options, "topico").replace(/^#/, "");
+    const extra: Record<string, string> = topic ? { topic_tag: topic } : {};
     let container: string;
-    if (!p.media.length) container = await create({ media_type: "TEXT", text });
-    else if (p.media.length === 1) container = await create({ ...item(p.media[0], false), text });
+    if (!p.media.length) container = await create({ media_type: "TEXT", text, ...extra });
+    else if (p.media.length === 1) container = await create({ ...item(p.media[0], false), text, ...extra });
     else {
       const children: string[] = [];
       for (const m of p.media.slice(0, 20)) { const id = await create(item(m, true)); await wait(id); children.push(id); }
-      container = await create({ media_type: "CAROUSEL", children: children.join(","), text });
+      container = await create({ media_type: "CAROUSEL", children: children.join(","), text, ...extra });
     }
     await wait(container);
-    const pub = await call<{ id: string }>(`${th(env)}/${uid}/threads_publish`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ creation_id: container, access_token: t }) });
-    const info = await call<{ permalink?: string }>(`${th(env)}/${pub.id}?fields=permalink&access_token=${encodeURIComponent(t)}`).catch(() => ({ permalink: undefined }));
-    return { id: pub.id, permalink: info.permalink ?? null };
+    const publish = async (c: string) => (await call<{ id: string }>(`${th(env)}/${uid}/threads_publish`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ creation_id: c, access_token: t }) })).id;
+    const id = await publish(container);
+    const info = await call<{ permalink?: string }>(`${th(env)}/${id}?fields=permalink&access_token=${encodeURIComponent(t)}`).catch(() => ({ permalink: undefined }));
+    let prev = id; let aviso: string | undefined;
+    for (const [i, txt] of optList(p.options, "thread").entries()) {
+      try { const c = await create({ media_type: "TEXT", text: txt, reply_to_id: prev }); await wait(c); prev = await publish(c); }
+      catch (e) { aviso = `Thread parou no item ${i + 1}: ${(e as Error).message}`; break; }
+    }
+    return { id, permalink: info.permalink ?? null, aviso };
+  },
+  async comment(env, auth, account, postId, text) {
+    const t = tok(auth); const uid = account.externalId;
+    const c = await call<{ id: string }>(`${th(env)}/${uid}/threads`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ media_type: "TEXT", text, reply_to_id: postId, access_token: t }) });
+    await sleep(2000);
+    return call<{ id: string }>(`${th(env)}/${uid}/threads_publish`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ creation_id: c.id, access_token: t }) });
   },
 };
 type PublishInput = import("./types.js").PublishInput;

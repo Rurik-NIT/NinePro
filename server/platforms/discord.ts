@@ -2,7 +2,7 @@
  * Discord — webhooks de canal (Integrações › Webhooks). Publica texto, imagens e vídeo no canal.
  * Conexão só por token: as URLs dos webhooks, uma por canal.
  */
-import { blob, download, http, PlatformError, type ChannelProvider, type StoredAuth } from "./types.js";
+import { blob, download, http, optList, optNum, optStr, PlatformError, type ChannelProvider, type StoredAuth } from "./types.js";
 
 interface Hook { id: string; url: string; name: string; channel_id: string; guild_id?: string }
 const RE = /^https:\/\/(?:ptb\.|canary\.)?(?:discord|discordapp)\.com\/api\/(?:v\d+\/)?webhooks\/(\d+)\/([\w-]+)$/;
@@ -52,7 +52,12 @@ export const discordProvider: ChannelProvider = {
     const videos = p.media.filter((m) => m.type === "video");
     let content = p.text.trim();
     let aviso: string | undefined;
+    const o = p.options;
     const payload: Record<string, unknown> = { embeds: images.map((m) => ({ image: { url: m.url } })), allowed_mentions: { parse: [] } };
+    if (optStr(o, "nome")) payload.username = optStr(o, "nome");
+    if (optStr(o, "avatar_url")) payload.avatar_url = optStr(o, "avatar_url");
+    if (optStr(o, "topico_forum")) payload.thread_name = optStr(o, "topico_forum");
+    if (optStr(o, "enquete_pergunta") && optList(o, "enquete_opcoes").length >= 2) payload.poll = { question: { text: optStr(o, "enquete_pergunta") }, answers: optList(o, "enquete_opcoes").slice(0, 10).map((text) => ({ poll_media: { text } })), duration: optNum(o, "enquete_horas") ?? 24, allow_multiselect: false };
     const fd = new FormData();
     if (videos.length) {
       try {

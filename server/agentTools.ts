@@ -5,7 +5,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dispatchEvent } from "./webhooks.js";
 import { applyCampaignStatus } from "./connections.js";
-import { channelLabel, checkPost, createBroadcast, publishPost, refreshMediaStats, replyComment, savePost, sendTemplate, sendToConversation } from "./channels.js";
+import { channelLabel, checkPost, createBroadcast, publishPost, refreshMediaStats, replyComment, savePost, sendTemplate, sendToConversation, type ChannelCtx } from "./channels.js";
+import { cleanOptions, describeOptions, POST_OPTIONS, type OptKind } from "../src/config/postOptions.js";
+import { importPostsCsv } from "./postImport.js";
 import { CHANNELS, PUBLISHABLE, type ChannelId } from "./platforms/index.js";
 import { listUploads, makeUploadToken, readUploadToken } from "./media.js";
 import { WEBHOOK_EVENTS } from "./events.js";
@@ -394,30 +396,50 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "publicar", title: "Publicar, agendar ou salvar rascunho em várias redes", write: true,
-    description: "Publica agora, agenda ou salva rascunho em uma ou várias redes de uma vez: Instagram, Facebook, Threads, LinkedIn, YouTube, TikTok, X, Telegram, Discord e Bluesky. Use 'textos_por_rede' para adaptar a legenda a cada rede (ex.: X curto, LinkedIn mais longo) e 'titulo' para o YouTube. Mídias: URLs públicas https (use gerar_link_de_envio para arquivos do computador). Antes, confira com validar_publicacao e mostre à pessoa o pacote (contas, textos, mídia) para aprovar.",
+    description: "Publica agora, agenda, manda para a fila ou salva rascunho em uma ou várias redes de uma vez: Instagram, Facebook, Threads, LinkedIn, YouTube, TikTok, X, Pinterest, Google Meu Negócio, Telegram, Discord, Slack e Bluesky. Use 'textos_por_rede' para adaptar a legenda a cada rede, 'titulo' para YouTube e Pinterest, 'opcoes' para recursos de cada rede (primeiro comentário, thread, enquete, privacidade, playlist… veja opcoes_de_publicacao), 'horarios_por_rede' para horários diferentes e 'reciclar' para republicar de tempos em tempos. Se o espaço exigir aprovação, a publicação fica 'aguardando_aprovacao' até uma pessoa aprovar no app. Mídias: URLs públicas https (use gerar_link_de_envio para arquivos do computador). Antes, confira com validar_publicacao e mostre à pessoa o pacote (contas, textos, mídia, opções) para aprovar.",
     input: { type: "object", properties: {
       contas: { type: "array", items: { type: "string", format: "uuid" }, description: "IDs das contas (listar_contas_conectadas, campo pode_publicar). Obrigatório se houver mais de uma conta." },
       legenda: { type: "string", maxLength: 63206, description: "Texto padrão de todas as redes" },
-      textos_por_rede: { type: "object", description: "Texto específico por rede, ex.: { \"x\": \"…\", \"linkedin_social\": \"…\" }. Chaves: instagram, facebook, threads, linkedin_social, youtube, tiktok_social, x, telegram, discord, bluesky", additionalProperties: { type: "string" } },
-      titulo: { type: "string", maxLength: 100, description: "Título (obrigatório no YouTube)" },
+      textos_por_rede: { type: "object", description: "Texto específico por rede, ex.: { \"x\": \"…\", \"linkedin_social\": \"…\" }. Chaves: instagram, facebook, threads, linkedin_social, youtube, tiktok_social, x, pinterest, google_business, telegram, discord, slack, bluesky", additionalProperties: { type: "string" } },
+      titulo: { type: "string", maxLength: 100, description: "Título (obrigatório no YouTube; usado no Pinterest)" },
       midias: { type: "array", items: { type: "string" }, maxItems: 35 }, tipo: { type: "string", enum: ["IMAGE", "REELS", "CAROUSEL", "STORIES"], description: "Formato no Instagram" },
       agendar_para: { type: "string", format: "date-time", description: "Vazio = publicar agora" }, rascunho: { type: "boolean", description: "true = só salva como rascunho" },
       fila: { type: "boolean", description: "true = entra no próximo horário livre da fila (em vez de agendar_para)" }, fila_id: { type: "string", format: "uuid", description: "Fila específica (padrão: a principal)" },
+      opcoes: { type: "object", description: "Opções por rede, ex.: { \"instagram\": { \"primeiro_comentario\": \"Link na bio\", \"colaboradores\": [\"@parceiro\"] }, \"x\": { \"thread\": [\"parte 2\", \"parte 3\"] }, \"youtube\": { \"visibilidade\": \"unlisted\" } }. Chaves: instagram, facebook, threads, linkedin_social, youtube, tiktok_social, x, pinterest, google_business, telegram, discord, slack, bluesky. Campos de cada rede: opcoes_de_publicacao.", additionalProperties: { type: "object" } },
+      horarios_por_rede: { type: "object", description: "Horário próprio por rede (ISO 8601), ex.: { \"linkedin_social\": \"2026-12-01T11:00:00Z\" }. Redes sem horário próprio usam agendar_para (ou agora).", additionalProperties: { type: "string", format: "date-time" } },
+      reciclar: { type: "object", description: "Republicar depois de publicada: { a_cada_dias: 30, vezes: 5, variacoes: [\"texto alternativo\"] }. YouTube e TikTok ficam de fora.", properties: { a_cada_dias: { type: "integer", minimum: 1, maximum: 365 }, vezes: { type: "integer", minimum: 1, maximum: 100 }, ate: { type: "string", format: "date-time" }, variacoes: { type: "array", items: { type: "string" }, maxItems: 10 } }, required: ["a_cada_dias"], additionalProperties: false },
+      exige_aprovacao: { type: "boolean", description: "true = vai para aprovação de um administrador no app antes de publicar" },
     }, additionalProperties: false },
     run: async (ctx, a) => publishFor(ctx, a, PUBLISHABLE),
+  },
+  {
+    name: "opcoes_de_publicacao", title: "Opções de publicação de cada rede", write: false,
+    description: "Lista os campos aceitos em 'opcoes' do publicar para cada rede (primeiro comentário, thread, enquete, colaboradores, privacidade do TikTok, playlist do YouTube, pasta do Pinterest, evento/oferta do Google…), com tipo, limites e valores permitidos.",
+    input: { type: "object", properties: { redes: { type: "array", items: { type: "string" }, description: "Vazio = todas. instagram, facebook, threads, linkedin_social, youtube, tiktok_social, x, pinterest, google_business, telegram, discord, slack, bluesky" } }, additionalProperties: false },
+    run: async (_ctx, a) => {
+      const want = (Array.isArray(a.redes) && a.redes.length ? a.redes.map((r) => str(r, 30)) : Object.keys(POST_OPTIONS)).filter((k) => k in POST_OPTIONS) as OptKind[];
+      return { redes: Object.fromEntries(want.map((k) => [k, { nome: channelLabel(k as ChannelId), resumo: describeOptions(k), campos: POST_OPTIONS[k].map((f) => ({ campo: f.key, nome: f.label, tipo: f.type, ...(f.options ? { valores: f.options.map((o) => o.value) } : {}), ...(f.max !== undefined ? { max: f.max } : {}), ...(f.maxItems ? { max_itens: f.maxItems } : {}), ...(f.min !== undefined ? { min: f.min } : {}), ...(f.hint ? { dica: f.hint } : {}) })) }])) };
+    },
+  },
+  {
+    name: "importar_publicacoes_csv", title: "Importar publicações em massa (CSV)", write: true,
+    description: "Cria várias publicações de uma vez a partir de um CSV (uma linha por publicação). Colunas: data (dd/mm/aaaa hh:mm em Brasília, ISO com fuso, 'fila' ou vazio = rascunho), texto, redes (instagram|facebook…), contas (@nome ou ID, separados por |), midias (links separados por |), titulo, primeiro_comentario, aprovacao (sim/nao). Por padrão só simula e devolve a prévia linha a linha; mostre à pessoa e chame de novo com simular=false para criar.",
+    input: { type: "object", properties: { csv: { type: "string", maxLength: 2000000 }, simular: { type: "boolean", default: true }, contas_padrao: { type: "array", items: { type: "string", format: "uuid" }, description: "Contas para linhas sem 'contas' e sem 'redes'" } }, required: ["csv"], additionalProperties: false },
+    run: async (ctx, a) => channel(() => importPostsCsv(chCtx(ctx), String(a.csv ?? ""), { dryRun: a.simular !== false, defaultAccountIds: Array.isArray(a.contas_padrao) ? a.contas_padrao.map((c) => str(c, 64)) : undefined })),
   },
   {
     name: "validar_publicacao", title: "Validar publicação antes de publicar", write: false,
     description: "Confere texto, título e mídias contra os limites de cada rede escolhida (tamanho do texto, número de fotos, vídeo obrigatório, título do YouTube…) sem publicar nada. Devolve problemas (que impedem) e avisos.",
     input: { type: "object", properties: {
-      contas: { type: "array", items: { type: "string", format: "uuid" } }, redes: { type: "array", items: { type: "string" }, description: "Alternativa a contas: instagram, facebook, threads, linkedin_social, youtube, tiktok_social, x, telegram, discord, bluesky" },
+      contas: { type: "array", items: { type: "string", format: "uuid" } }, redes: { type: "array", items: { type: "string" }, description: "Alternativa a contas: instagram, facebook, threads, linkedin_social, youtube, tiktok_social, x, pinterest, google_business, telegram, discord, slack, bluesky" },
       legenda: { type: "string" }, textos_por_rede: { type: "object", additionalProperties: { type: "string" } }, titulo: { type: "string" }, midias: { type: "array", items: { type: "string" } },
+      opcoes: { type: "object", description: "Mesmo formato do publicar", additionalProperties: { type: "object" } },
     }, additionalProperties: false },
     run: async (ctx, a) => {
       let kinds = (Array.isArray(a.redes) ? a.redes.map((r) => str(r, 30)) : []).filter((k) => PUBLISHABLE.includes(k as ChannelId)) as ChannelId[];
       if (Array.isArray(a.contas) && a.contas.length) kinds = [...kinds, ...(await q<Json[]>(ctx.sb.from("channel_accounts").select("kind").eq("workspace_id", ctx.ws).in("id", a.contas.map((c) => str(c, 64))))).map((c) => c.kind as ChannelId)];
       if (!kinds.length) throw new ToolError(400, "Informe contas ou redes.");
-      return checkPost(kinds, { text: str(a.legenda, 63206), title: str(a.titulo, 200) || undefined, custom: (a.textos_por_rede ?? {}) as Record<string, string>, mediaUrls: Array.isArray(a.midias) ? a.midias.map((m) => str(m, 1000)) : [] });
+      return checkPost(kinds, { text: str(a.legenda, 63206), title: str(a.titulo, 200) || undefined, custom: (a.textos_por_rede ?? {}) as Record<string, string>, mediaUrls: Array.isArray(a.midias) ? a.midias.map((m) => str(m, 1000)) : [], options: cleanOptions(a.opcoes, kinds) });
     },
   },
   {
@@ -504,12 +526,12 @@ export const TOOLS: Tool[] = [
   {
     name: "listar_publicacoes", title: "Listar publicações do NinePro", write: false,
     description: "Publicações criadas pelo NinePro (rascunho, agendada, publicada, falhou), com o ID da mídia e o link de cada conta quando publicada.",
-    input: { type: "object", properties: { status: { type: "string", enum: ["rascunho", "agendada", "publicada", "parcial", "falhou"] }, limite: { type: "integer", minimum: 1, maximum: 100, default: 20 } }, additionalProperties: false },
+    input: { type: "object", properties: { status: { type: "string", enum: ["rascunho", "agendada", "aguardando_aprovacao", "publicada", "parcial", "falhou"] }, limite: { type: "integer", minimum: 1, maximum: 100, default: 20 } }, additionalProperties: false },
     run: async (ctx, a) => {
-      let pq = ctx.sb.from("posts").select("id, content, status, media_type, media_urls, scheduled_at, published_at, result, error, created_at").eq("workspace_id", ctx.ws).order("created_at", { ascending: false }).limit(int(a.limite, 20, 1, 100));
-      const st = oneOf(a.status, ["rascunho", "agendada", "publicada", "parcial", "falhou"], "status", true); if (st) pq = pq.eq("status", st);
+      let pq = ctx.sb.from("posts").select("id, content, status, media_type, media_urls, scheduled_at, published_at, result, error, created_at, options, times, recycling, recycled_from, review_note, source").eq("workspace_id", ctx.ws).order("created_at", { ascending: false }).limit(int(a.limite, 20, 1, 100));
+      const st = oneOf(a.status, ["rascunho", "agendada", "aguardando_aprovacao", "publicada", "parcial", "falhou"], "status", true); if (st) pq = pq.eq("status", st);
       const rows = await q<Json[]>(pq);
-      return { publicacoes: rows.map((p) => ({ id: p.id, status: p.status, legenda: String(p.content ?? "").slice(0, 400), formato: p.media_type, midias: p.media_urls, agendada_para: p.scheduled_at, publicada_em: p.published_at, erro: p.error, contas: Object.values((p.result ?? {}) as Record<string, Json>).map((r) => ({ rede: r.rede ?? "Instagram", conta: r.conta, midia_id: r.id ?? null, link: r.permalink ?? null, erro: r.erro ?? null, aviso: r.aviso ?? null })) })) };
+      return { publicacoes: rows.map((p) => ({ id: p.id, status: p.status, legenda: String(p.content ?? "").slice(0, 400), formato: p.media_type, midias: p.media_urls, agendada_para: p.scheduled_at, publicada_em: p.published_at, erro: p.error, opcoes: p.options ?? {}, horarios_por_rede: p.times ?? {}, reciclar: p.recycling ?? null, reciclada_de: p.recycled_from ?? null, motivo_rejeicao: p.review_note ?? null, origem: p.source ?? "app", contas: Object.values((p.result ?? {}) as Record<string, Json>).map((r) => ({ rede: r.rede ?? "Instagram", conta: r.conta, midia_id: r.id ?? null, link: r.permalink ?? null, erro: r.erro ?? null, aviso: r.aviso ?? null, pendente_ate: r.pendente ?? null })) })) };
     },
   },
   {
@@ -730,15 +752,16 @@ export const TOOLS: Tool[] = [
       publicacao_id: { type: "string", format: "uuid" }, legenda: { type: "string" }, textos_por_rede: { type: "object", additionalProperties: { type: "string" } }, titulo: { type: "string" }, midias: { type: "array", items: { type: "string" }, maxItems: 35 },
       contas: { type: "array", items: { type: "string", format: "uuid" } }, tipo: { type: "string", enum: ["IMAGE", "REELS", "CAROUSEL", "STORIES"] },
       agendar_para: { type: "string", format: "date-time", description: "Novo horário. Vazio mantém como está." }, rascunho: { type: "boolean", description: "true = volta para rascunho (sai da fila)." },
+      opcoes: { type: "object", additionalProperties: { type: "object" } }, horarios_por_rede: { type: "object", additionalProperties: { type: "string" } }, reciclar: { type: "object" }, exige_aprovacao: { type: "boolean" },
     }, required: ["publicacao_id"], additionalProperties: false },
     run: async (ctx, a) => {
       const id = needUuid(a.publicacao_id, "publicacao_id");
-      const p = await q<Json | null>(ctx.sb.from("posts").select("id, status, content, title, custom, media_urls, media_type, channel_account_ids, scheduled_at").eq("workspace_id", ctx.ws).eq("id", id).maybeSingle());
+      const p = await q<Json | null>(ctx.sb.from("posts").select("id, status, content, title, custom, media_urls, media_type, channel_account_ids, scheduled_at, options, times, recycling").eq("workspace_id", ctx.ws).eq("id", id).maybeSingle());
       if (!p) throw new ToolError(404, "Publicação não encontrada neste espaço.");
       if (p.status === "publicada" || p.status === "parcial") throw new ToolError(409, p.status === "parcial" ? "Já saiu em parte das redes: use tentar_novamente para as que falharam, ou crie uma nova." : "Publicação já publicada não pode ser editada. Crie uma nova.");
       const when = str(a.agendar_para, 40) || (p.status === "agendada" ? (p.scheduled_at as string) : "");
-      const mode = a.rascunho === true ? "rascunho" : when ? "agendar" : p.status === "agendada" ? "agendar" : "rascunho";
-      return channel(() => savePost({ sb: ctx.sb, env: ctx.env, ws: ctx.ws, userId: null }, { id, title: a.titulo !== undefined ? str(a.titulo, 200) : p.title, custom: a.textos_por_rede ?? p.custom, content: a.legenda !== undefined ? str(a.legenda, 63206) : p.content, mediaUrls: Array.isArray(a.midias) ? a.midias : p.media_urls, accountIds: Array.isArray(a.contas) ? a.contas : p.channel_account_ids, mediaType: a.tipo ?? p.media_type, scheduledAt: when || undefined, mode }));
+      const mode = a.rascunho === true ? "rascunho" : when ? "agendar" : p.status === "agendada" || p.status === "aguardando_aprovacao" ? "agendar" : "rascunho";
+      return channel(() => savePost(chCtx(ctx), { id, title: a.titulo !== undefined ? str(a.titulo, 200) : p.title, custom: a.textos_por_rede ?? p.custom, content: a.legenda !== undefined ? str(a.legenda, 63206) : p.content, mediaUrls: Array.isArray(a.midias) ? a.midias : p.media_urls, accountIds: Array.isArray(a.contas) ? a.contas : p.channel_account_ids, mediaType: a.tipo ?? p.media_type, scheduledAt: when || undefined, mode, options: a.opcoes ?? p.options, times: a.horarios_por_rede ?? p.times, recycling: a.reciclar ?? p.recycling, requiresApproval: a.exige_aprovacao === true }));
     },
   },
   {
@@ -760,11 +783,12 @@ export const TOOLS: Tool[] = [
     input: { type: "object", properties: { publicacao_id: { type: "string", format: "uuid" } }, required: ["publicacao_id"], additionalProperties: false },
     run: async (ctx, a) => {
       const id = needUuid(a.publicacao_id, "publicacao_id");
-      const p = await q<Json | null>(ctx.sb.from("posts").select("id, status, content, title, custom, media_urls, media_type, channel_account_ids").eq("workspace_id", ctx.ws).eq("id", id).maybeSingle());
+      const p = await q<Json | null>(ctx.sb.from("posts").select("id, status, content, title, custom, media_urls, media_type, channel_account_ids, options, recycling").eq("workspace_id", ctx.ws).eq("id", id).maybeSingle());
       if (!p) throw new ToolError(404, "Publicação não encontrada neste espaço.");
       if (p.status === "publicada") throw new ToolError(409, "Esta publicação já foi publicada.");
+      if (p.status === "aguardando_aprovacao") throw new ToolError(409, "Esta publicação aguarda a aprovação de um administrador no app. Agentes não aprovam publicações.");
       if (p.status === "parcial" || p.status === "falhou") return channel(() => publishPost(ctx.sb, ctx.env, id));
-      return channel(() => savePost({ sb: ctx.sb, env: ctx.env, ws: ctx.ws, userId: null }, { id, title: p.title, custom: p.custom, content: p.content, mediaUrls: p.media_urls, accountIds: p.channel_account_ids, mediaType: p.media_type, mode: "agora" }));
+      return channel(() => savePost(chCtx(ctx), { id, title: p.title, custom: p.custom, content: p.content, mediaUrls: p.media_urls, accountIds: p.channel_account_ids, mediaType: p.media_type, mode: "agora", options: p.options, recycling: p.recycling }));
     },
   },
   {
@@ -848,7 +872,7 @@ const WRITE_SCOPE: Record<string, string> = {
   responder_conversa: "mensagens", enviar_modelo_whatsapp: "mensagens", responder_comentario: "mensagens",
   publicar_instagram: "publicacoes", publicar: "publicacoes", gerar_link_de_envio: "publicacoes", editar_publicacao: "publicacoes", excluir_publicacao: "publicacoes", publicar_agora: "publicacoes", tentar_novamente: "publicacoes",
   criar_disparo_whatsapp: "mensagens", criar_webhook: "automacoes", excluir_webhook: "automacoes",
-  configurar_fila: "publicacoes", excluir_fila: "publicacoes",
+  configurar_fila: "publicacoes", excluir_fila: "publicacoes", importar_publicacoes_csv: "publicacoes",
   criar_sequencia: "automacoes", ativar_sequencia: "automacoes", excluir_sequencia: "automacoes", inscrever_na_sequencia: "mensagens", remover_da_sequencia: "mensagens",
   criar_automacao_comentario: "automacoes", alterar_automacao: "automacoes",
 };
@@ -865,7 +889,11 @@ const DOCS: { titulo: string; texto: string }[] = [
   { titulo: "Fila de publicação", texto: "configurar_fila define horários fixos na semana (dia 0 = domingo, hora HH:MM, fuso). publicar com fila=true coloca no próximo horário livre. proximos_horarios mostra os horários livres; reorganizar=true reagenda o que já está na fila quando os horários mudam." },
   { titulo: "Validação", texto: "validar_publicacao confere texto, título e mídias contra cada rede. validar_midia abre a mídia e confere formato pelos bytes, tamanho, dimensões, proporção e duração por rede. contar_caracteres conta por rede, com a contagem ponderada do X (link = 23, emoji = 2)." },
   { titulo: "Sequências de mensagens", texto: "criar_sequencia monta passos com intervalo (esperar_minutos; 1440 = 1 dia), cada um com texto (só dentro de 24 h após a última mensagem do contato) ou modelo aprovado do WhatsApp. ativar_sequencia começa a enviar. inscrever_na_sequencia inscreve conversas ou números. Com sai_ao_responder, o contato sai quando responde. listar_inscricoes mostra o andamento." },
-  { titulo: "Redes e limites", texto: "Instagram (2.200 caracteres, exige foto ou vídeo), Facebook (texto, até 10 fotos ou 1 vídeo), Threads (500, até 20 mídias), LinkedIn (3.000, fotos ou 1 vídeo), YouTube (1 vídeo, título até 100), TikTok (vídeo ou fotos, 2.200), X (280, até 4 fotos ou 1 vídeo), Telegram (4.096, até 10 mídias), Discord (2.000), Bluesky (300, até 4 fotos de 1 MB ou 1 vídeo). Conecte em Conexões › Redes para publicar." },
+  { titulo: "Redes e limites", texto: "Instagram (2.200 caracteres, exige foto ou vídeo), Facebook (texto, até 10 fotos ou 1 vídeo), Threads (500, até 20 mídias), LinkedIn (3.000, fotos, 1 vídeo, PDF ou enquete), YouTube (1 vídeo, título até 100), TikTok (vídeo ou fotos, 2.200), X (280, até 4 fotos ou 1 vídeo, enquete, thread), Pinterest (descrição 800, título 100, 1 a 5 fotos ou 1 vídeo, numa pasta), Google Meu Negócio (1.500, 1 foto, novidade/evento/oferta com botão), Telegram (4.096, até 10 mídias), Discord (2.000, enquete), Slack (mensagens e arquivos em canais), Bluesky (300, até 4 fotos de 1 MB ou 1 vídeo, thread). Conecte em Conexões › Redes para publicar." },
+  { titulo: "Opções por rede", texto: "publicar aceita 'opcoes' por rede: primeiro_comentario (Instagram, Facebook, LinkedIn, YouTube, Threads, Slack), thread (X, Threads, Bluesky), enquete (X, LinkedIn, Discord), colaboradores e marcar (Instagram), documento_url (PDF no LinkedIn), visibilidade/playlist_id/categoria/tags (YouTube), privacidade/sem_dueto/sem_stitch/conteudo_de_marca (TikTok), pasta/link (Pinterest), tipo/botao/evento/cupom (Google Meu Negócio), formatacao/silencioso (Telegram). A lista completa, com limites, vem de opcoes_de_publicacao." },
+  { titulo: "Aprovação", texto: "O espaço pode exigir aprovação para publicações de agentes de IA, de membros ou de todos (Publicações › Aprovação). Nesses casos publicar devolve status aguardando_aprovacao e nada sai até uma pessoa administradora aprovar no app. Agentes não aprovam publicações. exige_aprovacao=true manda para aprovação mesmo sem a regra." },
+  { titulo: "Reciclagem e horário por rede", texto: "reciclar { a_cada_dias, vezes, variacoes } agenda a mesma publicação de novo depois de publicada (YouTube e TikTok ficam fora). horarios_por_rede publica cada rede no seu horário; a publicação fica agendada até a última rede sair." },
+  { titulo: "Importação por CSV", texto: "importar_publicacoes_csv cria até 500 publicações de uma vez. Colunas: data, texto, redes, contas, midias, titulo, primeiro_comentario, aprovacao. Simula por padrão (prévia linha a linha); simular=false cria." },
   { titulo: "Comentário vira DM (palavra-chave)", texto: "criar_automacao_comentario: quem comentar a palavra recebe DM com botão de link (até 20 caracteres no rótulo, link https) e resposta pública opcional. Pode valer para uma publicação (publicacao_id ou midia_ids) e uma vez por pessoa. A DM privada só pode ser enviada até 7 dias após o comentário. listar_automacoes e alterar_automacao gerenciam." },
   { titulo: "Análises", texto: "analisar_publicacoes: totais, médias, por formato, dia da semana e horário (Brasília), melhores e piores publicações do Instagram. resumo_desempenho, listar_campanhas e detalhar_campanha: anúncios (investimento, cliques, conversões, CPC, ROAS)." },
   { titulo: "WhatsApp", texto: "Fora da janela de 24 horas só modelos aprovados podem ser enviados: listar_modelos_whatsapp, enviar_modelo_whatsapp (um número) e criar_disparo_whatsapp (lista de até 5.000). Dentro da janela, responder_conversa." },
@@ -927,8 +955,11 @@ async function publishFor(ctx: ToolCtx, a: Json, kinds: ChannelId[]) {
   }
   const unknown = contas.filter((c) => !all.some((x) => x.id === c));
   if (unknown.length) throw new ToolError(400, `Conta(s) não encontrada(s) ou desconectada(s): ${unknown.join(", ")}. Use listar_contas_conectadas.`);
-  return channel(() => savePost({ sb: ctx.sb, env: ctx.env, ws: ctx.ws, userId: null }, { content: str(a.legenda, 63206), custom: a.textos_por_rede ?? {}, title: str(a.titulo, 200) || undefined, accountIds: contas, mediaUrls: a.midias, mediaType: a.tipo, scheduledAt: a.agendar_para, queueId: a.fila_id ? needUuid(a.fila_id, "fila_id") : undefined, mode: a.rascunho === true ? "rascunho" : useQueue ? "fila" : a.agendar_para ? "agendar" : "agora" }));
+  const ownTimes = a.horarios_por_rede && typeof a.horarios_por_rede === "object" && Object.keys(a.horarios_por_rede).length > 0;
+  return channel(() => savePost(chCtx(ctx), { content: str(a.legenda, 63206), custom: a.textos_por_rede ?? {}, title: str(a.titulo, 200) || undefined, accountIds: contas, mediaUrls: a.midias, mediaType: a.tipo, scheduledAt: a.agendar_para, queueId: a.fila_id ? needUuid(a.fila_id, "fila_id") : undefined, mode: a.rascunho === true ? "rascunho" : useQueue ? "fila" : a.agendar_para || ownTimes ? "agendar" : "agora", options: a.opcoes, times: a.horarios_por_rede, recycling: a.reciclar, requiresApproval: a.exige_aprovacao === true }));
 }
+/** Contexto de publicação de um agente: conta como "agente" (OAuth) ou "api" (chave) para a regra de aprovação. */
+const chCtx = (ctx: ToolCtx): ChannelCtx => ({ sb: ctx.sb, env: ctx.env, ws: ctx.ws, userId: ctx.userId ?? null, source: ctx.userId ? "agente" : "api" });
 
 export const TOOL_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 

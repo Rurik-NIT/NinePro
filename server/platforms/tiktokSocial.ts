@@ -4,7 +4,7 @@
  * Vídeo: envio do arquivo em partes (FILE_UPLOAD). Fotos: PULL_FROM_URL (o domínio das mídias precisa estar verificado no app).
  * Apps ainda não auditados pelo TikTok só publicam como privado (SELF_ONLY).
  */
-import { download, http, PlatformError, sleep, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
+import { download, http, optBool, optNum, optStr, PlatformError, sleep, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
 
 const API = "https://open.tiktokapis.com/v2";
 const SCOPES = ["user.info.basic", "user.info.profile", "user.info.stats", "video.publish", "video.upload"];
@@ -65,7 +65,12 @@ export const tiktokSocialProvider: ChannelProvider = {
   async publish(_env, auth, account, p) {
     const info = await call<{ data: { privacy_level_options?: string[]; max_video_post_duration_sec?: number } }>(auth, "/post/publish/creator_info/query/", {});
     const opts = info.data.privacy_level_options ?? ["SELF_ONLY"];
-    const privacy = opts.includes("PUBLIC_TO_EVERYONE") ? "PUBLIC_TO_EVERYONE" : opts[0];
+    const o = p.options;
+    const wanted = optStr(o, "privacidade") || "PUBLIC_TO_EVERYONE";
+    const ORDER = ["PUBLIC_TO_EVERYONE", "FOLLOWER_OF_CREATOR", "MUTUAL_FOLLOW_FRIENDS", "SELF_ONLY"];
+    const privacy = opts.includes(wanted) ? wanted : ORDER.slice(ORDER.indexOf(wanted)).find((x) => opts.includes(x)) ?? opts[0];
+    const flags = { disable_comment: optBool(o, "sem_comentarios"), brand_content_toggle: optBool(o, "conteudo_de_marca"), brand_organic_toggle: optBool(o, "marca_propria"), is_aigc: optBool(o, "feito_com_ia") };
+    if (flags.brand_content_toggle && privacy === "SELF_ONLY") throw new PlatformError("TikTok: parceria paga não pode ser publicada como privada.");
     const text = p.text.trim().slice(0, 2200);
     const video = p.media.find((m) => m.type === "video");
     let publishId: string;
@@ -74,7 +79,7 @@ export const tiktokSocialProvider: ChannelProvider = {
       const MB = 1024 * 1024;
       const chunk = f.size <= 64 * MB ? f.size : 10 * MB;
       const count = f.size <= 64 * MB ? 1 : Math.floor(f.size / chunk);
-      const init = await call<{ data: { publish_id: string; upload_url: string } }>(auth, "/post/publish/video/init/", { post_info: { title: text, privacy_level: privacy, disable_duet: false, disable_comment: false, disable_stitch: false }, source_info: { source: "FILE_UPLOAD", video_size: f.size, chunk_size: chunk, total_chunk_count: count } });
+      const init = await call<{ data: { publish_id: string; upload_url: string } }>(auth, "/post/publish/video/init/", { post_info: { title: text, privacy_level: privacy, disable_duet: optBool(o, "sem_dueto"), disable_stitch: optBool(o, "sem_stitch"), ...flags, ...(optNum(o, "capa_ms") !== undefined ? { video_cover_timestamp_ms: optNum(o, "capa_ms") } : {}) }, source_info: { source: "FILE_UPLOAD", video_size: f.size, chunk_size: chunk, total_chunk_count: count } });
       for (let i = 0; i < count; i++) {
         const start = i * chunk, end = i === count - 1 ? f.size - 1 : start + chunk - 1;
         const r = await fetch(init.data.upload_url, { method: "PUT", headers: { "content-type": f.type || "video/mp4", "content-range": `bytes ${start}-${end}/${f.size}`, "content-length": String(end - start + 1) }, body: f.bytes.subarray(start, end + 1) as BodyInit });
@@ -84,7 +89,7 @@ export const tiktokSocialProvider: ChannelProvider = {
     } else {
       const images = p.media.filter((m) => m.type === "image").slice(0, 35);
       if (!images.length) throw new PlatformError("TikTok: adicione um vídeo ou fotos.");
-      const init = await call<{ data: { publish_id: string } }>(auth, "/post/publish/content/init/", { post_info: { title: (p.title || text).slice(0, 90), description: text, privacy_level: privacy, disable_comment: false, auto_add_music: true }, source_info: { source: "PULL_FROM_URL", photo_cover_index: 0, photo_images: images.map((m) => m.url) }, post_mode: "DIRECT_POST", media_type: "PHOTO" });
+      const init = await call<{ data: { publish_id: string } }>(auth, "/post/publish/content/init/", { post_info: { title: (p.title || text).slice(0, 90), description: text, privacy_level: privacy, ...flags, auto_add_music: o?.musica_automatica !== false }, source_info: { source: "PULL_FROM_URL", photo_cover_index: 0, photo_images: images.map((m) => m.url) }, post_mode: "DIRECT_POST", media_type: "PHOTO" });
       publishId = init.data.publish_id;
     }
     for (let i = 0; i < 40; i++) {
@@ -92,7 +97,7 @@ export const tiktokSocialProvider: ChannelProvider = {
       if (s.data.status === "PUBLISH_COMPLETE") {
         const id = s.data.publicaly_available_post_id?.[0];
         const user = String(account.detail.usuario ?? "");
-        return { id: id ? String(id) : publishId, permalink: id && user ? `https://www.tiktok.com/@${user}/${video ? "video" : "photo"}/${id}` : null, aviso: privacy === "SELF_ONLY" ? "Publicado como privado: o app do TikTok ainda não foi auditado." : undefined };
+        return { id: id ? String(id) : publishId, permalink: id && user ? `https://www.tiktok.com/@${user}/${video ? "video" : "photo"}/${id}` : null, aviso: privacy !== wanted ? (privacy === "SELF_ONLY" && !opts.includes(wanted) ? "Publicado como privado: o app do TikTok ainda não foi auditado." : `A conta não permite "${wanted}"; publicado como ${privacy}.`) : undefined };
       }
       if (s.data.status === "FAILED") throw new PlatformError(`TikTok recusou: ${s.data.fail_reason ?? "motivo não informado"}.`);
       await sleep(3000);

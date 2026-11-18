@@ -4,9 +4,10 @@
  * Publica um vídeo por vez (vídeo vertical de até 3 minutos vira Short). Título obrigatório (até 100).
  * Atenção: projetos do Google não auditados só podem enviar vídeos como privados.
  */
-import { download, http, PlatformError, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
+import { download, http, optBool, optList, optStr, PlatformError, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
 
-const SCOPES = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly", "openid", "email"];
+/** force-ssl: playlist e primeiro comentário (conexões antigas sem ele recebem um aviso para reconectar). */
+const SCOPES = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly", "https://www.googleapis.com/auth/youtube.force-ssl", "openid", "email"];
 const creds = (env: Env, a?: StoredAuth) => ({ id: a?.extra?.clientId || env.YOUTUBE_CLIENT_ID || env.GOOGLE_ADS_CLIENT_ID || "", secret: a?.extra?.clientSecret || env.YOUTUBE_CLIENT_SECRET || env.GOOGLE_ADS_CLIENT_SECRET || "" });
 const bearer = (a: StoredAuth) => ({ authorization: `Bearer ${a.accessToken}` });
 const yt = <T>(a: StoredAuth, url: string, init?: RequestInit) => http<T>("YouTube", url, { ...init, headers: { ...bearer(a), ...(init?.headers as Record<string, string> | undefined) } });
@@ -71,14 +72,29 @@ export const youtubeProvider: ChannelProvider = {
     const title = (p.title || p.text.split("\n")[0] || "").replace(/[<>]/g, "").trim().slice(0, 100);
     if (!title) throw new PlatformError("YouTube: informe o título do vídeo.");
     const f = await download("YouTube", video.url, 1_500_000_000);
-    const meta = { snippet: { title, description: p.text.replace(/[<>]/g, "").slice(0, 5000), categoryId: "22", defaultLanguage: "pt-BR" }, status: { privacyStatus: "public", selfDeclaredMadeForKids: false } };
-    const init = await fetch("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status", { method: "POST", headers: { ...bearer(auth), "content-type": "application/json; charset=UTF-8", "x-upload-content-length": String(f.size), "x-upload-content-type": f.type }, body: JSON.stringify(meta) });
+    const o = p.options;
+    const tags = optList(o, "tags").map((t) => t.replace(/[<>,]/g, "").trim()).filter(Boolean);
+    const meta = { snippet: { title, description: p.text.replace(/[<>]/g, "").slice(0, 5000), categoryId: optStr(o, "categoria") || "22", defaultLanguage: "pt-BR", ...(tags.length ? { tags } : {}) }, status: { privacyStatus: optStr(o, "visibilidade") || "public", selfDeclaredMadeForKids: optBool(o, "para_criancas"), ...(optBool(o, "conteudo_sintetico") ? { containsSyntheticMedia: true } : {}) } };
+    const notify = o?.notificar_inscritos === false ? "&notifySubscribers=false" : "";
+    const init = await fetch(`https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status${notify}`, { method: "POST", headers: { ...bearer(auth), "content-type": "application/json; charset=UTF-8", "x-upload-content-length": String(f.size), "x-upload-content-type": f.type }, body: JSON.stringify(meta) });
     if (!init.ok) { const b = (await init.json().catch(() => ({}))) as { error?: { message?: string; errors?: { reason?: string }[] } }; throw new PlatformError(b.error?.errors?.[0]?.reason === "quotaExceeded" ? "YouTube: cota diária da API esgotada. Tente amanhã." : `YouTube: ${b.error?.message ?? `HTTP ${init.status}`}`, init.status === 401); }
     const location = init.headers.get("location");
     if (!location) throw new PlatformError("YouTube não abriu o envio do vídeo.");
     const up = await fetch(location, { method: "PUT", headers: { ...bearer(auth), "content-type": f.type, "content-length": String(f.size) }, body: f.bytes as BodyInit });
     const v = (await up.json().catch(() => ({}))) as { id?: string; status?: { privacyStatus?: string }; error?: { message?: string } };
     if (!up.ok || !v.id) throw new PlatformError(`YouTube: ${v.error?.message ?? `falha no envio (HTTP ${up.status})`}`);
-    return { id: v.id, permalink: `https://www.youtube.com/watch?v=${v.id}`, aviso: v.status?.privacyStatus === "private" ? "O YouTube deixou o vídeo privado: o projeto do Google ainda não passou pela auditoria da API." : undefined };
+    const avisos: string[] = [];
+    if (v.status?.privacyStatus === "private" && optStr(o, "visibilidade") !== "private") avisos.push("O YouTube deixou o vídeo privado: o projeto do Google ainda não passou pela auditoria da API.");
+    const playlist = optStr(o, "playlist_id");
+    if (playlist) await yt(auth, "https://www.googleapis.com/youtube/v3/playlistItems?part=snippet", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ snippet: { playlistId: playlist, resourceId: { kind: "youtube#video", videoId: v.id } } }) })
+      .catch((e) => avisos.push(`Não entrou na playlist: ${(e as Error).message}${/insufficient|scope|permission/i.test((e as Error).message) ? " Reconecte o YouTube para liberar playlists." : ""}`));
+    return { id: v.id, permalink: `https://www.youtube.com/watch?v=${v.id}`, aviso: avisos.join(" ") || undefined };
+  },
+  async comment(_env, auth, _account, postId, text) {
+    try {
+      return await yt<{ id: string }>(auth, "https://www.googleapis.com/youtube/v3/commentThreads?part=snippet", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ snippet: { videoId: postId, topLevelComment: { snippet: { textOriginal: text.slice(0, 10000) } } } }) });
+    } catch (e) {
+      throw new PlatformError(/insufficient|scope|permission/i.test((e as Error).message) ? "YouTube: reconecte a conta para liberar comentários." : (e as Error).message);
+    }
   },
 };

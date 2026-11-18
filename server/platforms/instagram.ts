@@ -146,7 +146,15 @@ export const igHideComment = (env: Env, token: string, commentId: string, hide: 
 export const igDeleteComment = (env: Env, token: string, commentId: string) => call(`${ig(env)}/${commentId}`, { method: "DELETE", headers: bearer(token) });
 
 /** Publica no feed (imagem, vídeo/reels, carrossel) ou nos stories. As mídias precisam ter URL pública. */
-export async function igPublish(env: Env, token: string, igId: string, p: { type: "IMAGE" | "VIDEO" | "REELS" | "CAROUSEL" | "STORIES"; urls: string[]; caption: string }): Promise<{ id: string; permalink: string | null }> {
+export interface IgExtras { collaborators?: string[]; userTags?: string[]; shareToFeed?: boolean; coverUrl?: string; locationId?: string }
+export const igPostComment = (env: Env, token: string, mediaId: string, message: string) =>
+  call<{ id: string }>(`${ig(env)}/${mediaId}/comments`, { method: "POST", headers: bearer(token, { "content-type": "application/x-www-form-urlencoded" }), body: new URLSearchParams({ message }) });
+export async function igPublish(env: Env, token: string, igId: string, p: { type: "IMAGE" | "VIDEO" | "REELS" | "CAROUSEL" | "STORIES"; urls: string[]; caption: string; extras?: IgExtras }): Promise<{ id: string; permalink: string | null }> {
+  const x = p.extras ?? {};
+  const handle = (s: string) => s.trim().replace(/^@/, "");
+  const collab: Record<string, string> = x.collaborators?.length ? { collaborators: JSON.stringify(x.collaborators.slice(0, 3).map(handle)) } : {};
+  const loc: Record<string, string> = x.locationId ? { location_id: x.locationId } : {};
+  const tagsFor = (video: boolean): Record<string, string> => (x.userTags?.length ? { user_tags: JSON.stringify(x.userTags.slice(0, 20).map((u, i) => (video ? { username: handle(u) } : { username: handle(u), x: Math.min(0.9, 0.1 + (i % 5) * 0.2), y: Math.min(0.9, 0.1 + Math.floor(i / 5) * 0.2) }))) } : {});
   const form = (o: Record<string, string>) => ({ method: "POST", headers: bearer(token, { "content-type": "application/x-www-form-urlencoded" }), body: new URLSearchParams(o) });
   const isVideo = (u: string) => /\.(mp4|mov|m4v)(\?|$)/i.test(u);
   const create = async (o: Record<string, string>) => (await call<{ id: string }>(`${ig(env)}/${igId}/media`, form(o))).id;
@@ -165,17 +173,17 @@ export async function igPublish(env: Env, token: string, igId: string, p: { type
     if (p.urls.length < 2 || p.urls.length > 10) throw new PlatformError("Carrossel precisa de 2 a 10 mídias.");
     const children: string[] = [];
     for (const u of p.urls) {
-      const id = await create(isVideo(u) ? { media_type: "VIDEO", video_url: u, is_carousel_item: "true" } : { image_url: u, is_carousel_item: "true" });
+      const id = await create(isVideo(u) ? { media_type: "VIDEO", video_url: u, is_carousel_item: "true" } : { image_url: u, is_carousel_item: "true", ...(children.length === 0 ? tagsFor(false) : {}) });
       if (isVideo(u)) await wait(id);
       children.push(id);
     }
-    container = await create({ media_type: "CAROUSEL", children: children.join(","), caption: p.caption });
+    container = await create({ media_type: "CAROUSEL", children: children.join(","), caption: p.caption, ...collab, ...loc });
   } else if (p.type === "STORIES") {
-    container = await create(isVideo(p.urls[0]) ? { media_type: "STORIES", video_url: p.urls[0] } : { media_type: "STORIES", image_url: p.urls[0] });
+    container = await create({ ...(isVideo(p.urls[0]) ? { media_type: "STORIES", video_url: p.urls[0] } : { media_type: "STORIES", image_url: p.urls[0] }), ...tagsFor(isVideo(p.urls[0])) });
   } else if (p.type === "VIDEO" || p.type === "REELS" || isVideo(p.urls[0])) {
-    container = await create({ media_type: "REELS", video_url: p.urls[0], caption: p.caption });
+    container = await create({ media_type: "REELS", video_url: p.urls[0], caption: p.caption, ...collab, ...loc, ...tagsFor(true), ...(x.shareToFeed === false ? { share_to_feed: "false" } : {}), ...(x.coverUrl ? { cover_url: x.coverUrl } : ({} as Record<string, string>)) });
   } else {
-    container = await create({ image_url: p.urls[0], caption: p.caption });
+    container = await create({ image_url: p.urls[0], caption: p.caption, ...collab, ...loc, ...tagsFor(false) });
   }
   await wait(container);
   const pub = await call<{ id: string }>(`${ig(env)}/${igId}/media_publish`, form({ creation_id: container }));

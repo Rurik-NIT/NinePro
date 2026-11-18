@@ -3,7 +3,7 @@
  * com o produto "Share on LinkedIn" (perfil) e, se aprovado, "Community Management API" (Páginas da empresa).
  * Opcionais: LINKEDIN_SOCIAL_SCOPES, LINKEDIN_API_VERSION.
  */
-import { download, http, PlatformError, sleep, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
+import { download, http, optList, optStr, PlatformError, sleep, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
 
 const API = "https://api.linkedin.com/rest";
 export const LIS_DEFAULT_SCOPES = "openid profile w_member_social";
@@ -72,7 +72,17 @@ export const linkedinSocialProvider: ChannelProvider = {
       return r.headers.get("etag") ?? "";
     };
     let content: Record<string, unknown> | undefined;
-    if (images.length) {
+    const o = p.options;
+    const doc = optStr(o, "documento_url"), question = optStr(o, "enquete_pergunta");
+    if (doc) {
+      const f = await download("LinkedIn", doc, 100_000_000);
+      if (!/pdf/i.test(f.type) && !/\.pdf(\?|$)/i.test(doc)) throw new PlatformError("LinkedIn: o documento precisa ser um PDF.");
+      const init = await li<{ value: { uploadUrl: string; document: string } }>(env, auth, "/documents?action=initializeUpload", { method: "POST", body: JSON.stringify({ initializeUploadRequest: { owner } }) });
+      await put(init.value.uploadUrl, f.bytes, "application/pdf");
+      content = { media: { id: init.value.document, title: (optStr(o, "documento_titulo") || f.name.replace(/\.pdf$/i, "") || "Documento").slice(0, 200) } };
+    } else if (question) {
+      content = { poll: { question: question.slice(0, 140), options: optList(o, "enquete_opcoes").slice(0, 4).map((text) => ({ text: text.slice(0, 30) })), settings: { duration: optStr(o, "enquete_duracao") || "THREE_DAYS" } } };
+    } else if (images.length) {
       const urns: string[] = [];
       for (const m of images.slice(0, 20)) {
         const f = await download("LinkedIn", m.url, 36_000_000);
@@ -103,6 +113,11 @@ export const linkedinSocialProvider: ChannelProvider = {
     }
     const id = r.headers.get("x-restli-id") ?? "";
     return { id, permalink: id ? `https://www.linkedin.com/feed/update/${id}/` : null };
+  },
+  async comment(env, auth, account, postId, text) {
+    const r = await fetch(`${API}/socialActions/${enc(postId)}/comments`, { method: "POST", headers: headers(env, auth), body: JSON.stringify({ actor: account.externalId, object: postId, message: { text } }), signal: AbortSignal.timeout(30_000) });
+    if (!r.ok) { const b = (await r.json().catch(() => ({}))) as { message?: string }; throw new PlatformError(`LinkedIn: ${b.message ?? `HTTP ${r.status}`}`); }
+    return { id: r.headers.get("x-restli-id") ?? "" };
   },
 };
 export const LINKEDIN_ORG_SCOPES = ORG_SCOPES;

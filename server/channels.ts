@@ -9,6 +9,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadAuth, loadOwnApp, serviceClient } from "./connections.js";
 import { encryptToken } from "./crypto.js";
 import { CHANNELS, graphemes, isChannel, isVideoUrl, PlatformError, PUBLISHABLE, type ChannelId, type StoredAuth } from "./platforms/index.js";
+import { optList, optStr, type NetOptions } from "./platforms/types.js";
+import { checkOptions, cleanOptions, type OptKind, type PostOptions } from "../src/config/postOptions.js";
+import { importPostsCsv } from "./postImport.js";
 import * as IG from "./platforms/instagram.js";
 import * as WA from "./platforms/whatsapp.js";
 import type { WebhookEvent } from "./events.js";
@@ -404,7 +407,8 @@ export async function handleChannelWebhook(req: Request, env: Env): Promise<Resp
 }
 
 /* ------------------------------------------------------------------ ações enviadas pelas telas e pelos agentes */
-export interface ChannelCtx { sb: SupabaseClient; env: Env; ws: string; userId: string | null }
+/** role: papel de quem pediu (owner/admin/member). source: app, agente (MCP) ou api (chave). */
+export interface ChannelCtx { sb: SupabaseClient; env: Env; ws: string; userId: string | null; role?: string; source?: "app" | "agente" | "api" }
 
 async function loadAccount(ctx: ChannelCtx, id: string): Promise<Account> {
   const { data } = await ctx.sb.from("channel_accounts").select(ACCOUNT_COLS).eq("workspace_id", ctx.ws).eq("id", id).maybeSingle();
@@ -496,10 +500,10 @@ ${button.label}: ${button.url}`;
 }
 
 /* ------------------------------------------------------------------ publicação em várias redes */
-export interface PostDraft { text: string; title?: string; custom?: Record<string, string>; mediaUrls: string[]; mediaType?: string }
+export interface PostDraft { text: string; title?: string; custom?: Record<string, string>; mediaUrls: string[]; mediaType?: string; options?: PostOptions }
 const mediaOf = (urls: string[]) => urls.map((url) => ({ url, type: (isVideoUrl(url) ? "video" : "image") as "video" | "image" }));
 
-/** Confere o post contra os limites de cada rede escolhida. Devolve problemas (bloqueiam) e avisos. */
+/** Confere o post contra os limites e as opções de cada rede escolhida. Devolve problemas (bloqueiam) e avisos. */
 export function checkPost(kinds: ChannelId[], d: PostDraft) {
   const problemas: string[] = []; const avisos: string[] = [];
   const media = mediaOf(d.mediaUrls);
@@ -507,28 +511,41 @@ export function checkPost(kinds: ChannelId[], d: PostDraft) {
   for (const kind of [...new Set(kinds)]) {
     const lim = CHANNELS[kind]?.limits; const name = LABEL[kind] ?? kind;
     if (!lim) { problemas.push(`${name}: publicação não disponível.`); continue; }
+    const o = d.options?.[kind as OptKind];
     const text = (d.custom?.[kind] ?? d.text).trim();
     const n = kind === "x" ? xWeighted(text) : graphemes(text);
+    const docOrPoll = kind === "linkedin_social" && !!(o?.documento_url || o?.enquete_pergunta);
     if (kind === "instagram" && (text.match(/(^|\s)#[\p{L}\p{N}_]+/gu) ?? []).length > 30) problemas.push("Instagram: no máximo 30 hashtags.");
     if (kind === "instagram" && (text.match(/(^|\s)@[\w.]+/g) ?? []).length > 20) problemas.push("Instagram: no máximo 20 menções.");
     if (n > lim.text) (kind === "x" ? avisos : problemas).push(`${name}: o texto tem ${n} caracteres (máximo ${lim.text}${kind === "x" ? ", exceto contas Premium" : ""}).`);
     if (!media.length && !lim.textOnly) problemas.push(`${name}: precisa de ${lim.needsMedia === "video" ? "um vídeo" : "foto ou vídeo"}.`);
-    if (!media.length && lim.textOnly && !text) problemas.push(`${name}: escreva um texto ou adicione mídia.`);
+    if (!media.length && lim.textOnly && !text && !docOrPoll) problemas.push(`${name}: escreva um texto ou adicione mídia.`);
     if (lim.needsMedia === "video" && !vids && media.length) problemas.push(`${name}: precisa de um vídeo.`);
     if (imgs > lim.images) (lim.images ? avisos : problemas).push(lim.images ? `${name}: só as primeiras ${lim.images} imagens serão usadas.` : `${name}: não aceita imagens, só vídeo.`);
-    if (vids > lim.videos) problemas.push(`${name}: aceita no máximo ${lim.videos} vídeo(s).`);
+    if (vids > lim.videos) problemas.push(lim.videos ? `${name}: aceita no máximo ${lim.videos} vídeo(s).` : `${name}: não aceita vídeo.`);
     if (imgs && vids && !lim.mixed) problemas.push(`${name}: não mistura fotos e vídeo na mesma publicação.`);
     if (lim.needsTitle && !(d.title?.trim() || text.split("\n")[0])) problemas.push(`${name}: informe o título.`);
     if (lim.titleMax && d.title && graphemes(d.title) > lim.titleMax) problemas.push(`${name}: título com mais de ${lim.titleMax} caracteres.`);
+    problemas.push(...checkOptions(kind, o, { media: media.length, hasVideo: vids > 0, label: name }));
+    for (const t of (Array.isArray(o?.thread) ? (o!.thread as string[]) : [])) {
+      const max = kind === "x" ? 280 : kind === "bluesky" ? 300 : 500;
+      const tn = kind === "x" ? xWeighted(t) : graphemes(t);
+      if (tn > max) { (kind === "x" ? avisos : problemas).push(`${name}: um item da thread tem ${tn} caracteres (máximo ${max}).`); break; }
+    }
+    if (o?.primeiro_comentario && !CHANNELS[kind]?.comment && kind !== "instagram") avisos.push(`${name}: primeiro comentário não disponível; será ignorado.`);
   }
   return { ok: !problemas.length, problemas: [...new Set(problemas)], avisos: [...new Set(avisos)] };
 }
 
-type PostResult = Record<string, { id?: string; permalink?: string | null; erro?: string; aviso?: string; conta: string; rede?: string }>;
-/** Publica nas contas marcadas. Numa nova tentativa, pula as contas em que já publicou. */
-export async function publishPost(sb: SupabaseClient, env: Env, postId: string) {
+type PostResult = Record<string, { id?: string; permalink?: string | null; erro?: string; aviso?: string; conta: string; rede?: string; pendente?: string; comentario?: string }>;
+const NO_RECYCLE = new Set<ChannelId>(["youtube", "tiktok_social"]);
+
+/** Publica nas contas marcadas. Numa nova tentativa, pula as contas em que já publicou.
+ *  Contas com horário próprio ainda no futuro ficam pendentes (a publicação continua agendada). */
+export async function publishPost(sb: SupabaseClient, env: Env, postId: string, opts: { approved?: boolean } = {}) {
   const { data: post } = await sb.from("posts").select("*").eq("id", postId).maybeSingle();
   if (!post) throw new PlatformError("Publicação não encontrada.");
+  if (post.status === "aguardando_aprovacao" && !opts.approved) throw new PlatformError("Esta publicação aguarda a aprovação de um administrador.");
   const ws = post.workspace_id as string;
   const ids = (post.channel_account_ids as string[]) ?? [];
   if (!ids.length) throw new PlatformError("Escolha ao menos uma conta.");
@@ -537,33 +554,106 @@ export async function publishPost(sb: SupabaseClient, env: Env, postId: string) 
   const result: PostResult = {};
   const urls = (post.media_urls as string[]) ?? [];
   const custom = (post.custom ?? {}) as Record<string, string>;
+  const options = (post.options ?? {}) as PostOptions;
+  const times = (post.times ?? {}) as Record<string, string>;
+  const pending: number[] = [];
+  let attempted = 0;
   for (const acc of (accs ?? []) as (Account & { detail: Json })[]) {
     if (prev[acc.id]?.id) { result[acc.id] = prev[acc.id]; continue; }
+    const own = Date.parse(times[acc.kind] ?? "");
+    if (Number.isFinite(own) && own > Date.now() + 30_000) { pending.push(own); result[acc.id] = { conta: acc.name, rede: LABEL[acc.kind] ?? acc.kind, pendente: new Date(own).toISOString() }; continue; }
+    attempted++;
     const text = String(custom[acc.kind] ?? post.content ?? "");
+    const o = (options[acc.kind as OptKind] ?? {}) as NetOptions;
     try {
+      let r: { id: string; permalink: string | null; aviso?: string };
+      let auth: StoredAuth;
+      const pa = { externalId: acc.external_id, name: acc.name, detail: acc.detail ?? {} };
       if (acc.kind === "instagram") {
-        const token = tokenOf(await channelAuth(sb, env, "instagram", acc.connection_id));
-        const r = await IG.igPublish(env, token, acc.external_id, { type: post.media_type as "IMAGE", urls, caption: text });
-        result[acc.id] = { id: r.id, permalink: r.permalink, conta: acc.name, rede: "Instagram" };
+        auth = await channelAuth(sb, env, "instagram", acc.connection_id);
+        const fmt = o.formato === "reels" ? "REELS" : o.formato === "stories" ? "STORIES" : (post.media_type as "IMAGE");
+        r = await IG.igPublish(env, tokenOf(auth), acc.external_id, { type: fmt, urls, caption: text, extras: { collaborators: optList(o, "colaboradores"), userTags: optList(o, "marcar"), shareToFeed: o.compartilhar_no_feed === false ? false : undefined, coverUrl: optStr(o, "capa_url") || undefined, locationId: optStr(o, "local_id") || undefined } });
       } else {
         const prov = CHANNELS[acc.kind];
         if (!prov?.publish) throw new PlatformError(`Publicação não disponível para ${LABEL[acc.kind] ?? acc.kind}.`);
-        const auth = await channelAuth(sb, env, acc.kind, acc.connection_id);
-        const r = await prov.publish(env, auth, { externalId: acc.external_id, name: acc.name, detail: acc.detail ?? {} }, { text, title: (post.title as string | null) ?? undefined, media: mediaOf(urls), format: post.media_type as string });
-        result[acc.id] = { id: r.id, permalink: r.permalink, conta: acc.name, rede: prov.label, ...(r.aviso ? { aviso: r.aviso } : {}) };
+        auth = await channelAuth(sb, env, acc.kind, acc.connection_id);
+        r = await prov.publish(env, auth, pa, { text, title: (post.title as string | null) ?? undefined, media: mediaOf(urls), format: post.media_type as string, options: o });
       }
+      const row: PostResult[string] = { id: r.id, permalink: r.permalink, conta: acc.name, rede: LABEL[acc.kind] ?? acc.kind, ...(r.aviso ? { aviso: r.aviso } : {}) };
+      const fc = optStr(o, "primeiro_comentario").trim();
+      if (fc) {
+        try {
+          const c = acc.kind === "instagram" ? await IG.igPostComment(env, tokenOf(auth), r.id, fc) : await CHANNELS[acc.kind]?.comment?.(env, auth, pa, r.id, fc);
+          if (c) row.comentario = c.id; else row.aviso = [row.aviso, "Primeiro comentário não disponível nesta rede."].filter(Boolean).join(" ");
+        } catch (e) { row.aviso = [row.aviso, `Primeiro comentário não foi feito: ${msg(e)}`].filter(Boolean).join(" "); }
+      }
+      result[acc.id] = row;
     } catch (e) { result[acc.id] = { erro: msg(e), conta: acc.name, rede: LABEL[acc.kind] ?? acc.kind }; }
   }
   const all = Object.values(result);
   const ok = all.filter((r) => r.id).length;
   const errors = all.filter((r) => r.erro).map((r) => `${r.rede ? `${r.rede} ` : ""}${r.conta}: ${r.erro}`);
+  if (pending.length) {
+    // ainda há redes com horário próprio: continua agendada para o próximo horário
+    const next = new Date(Math.min(...pending)).toISOString();
+    await sb.from("posts").update({ status: "agendada", scheduled_at: next, result, error: errors.join(" · ") || null, published_at: ok ? (post.published_at ?? now()) : null, attempts: errors.length && attempted ? ((post.attempts as number) ?? 0) + 1 : (post.attempts as number) ?? 0, updated_at: now() }).eq("id", postId);
+    return { ok: ok > 0 || !errors.length, status: "agendada", result, error: errors[0] ?? null, proxima: next };
+  }
   const status = !ok ? "falhou" : errors.length ? "parcial" : "publicada";
   await sb.from("posts").update({ status, result, error: errors.join(" · ") || null, published_at: ok ? (post.published_at ?? now()) : null, attempts: ((post.attempts as number) ?? 0) + 1, updated_at: now() }).eq("id", postId);
   await dispatchEvent(sb, ws, (ok ? "publicacao.publicada" : "publicacao.falhou") as WebhookEvent, { publicacao_id: postId, status, resultado: result });
-  return { ok: ok > 0, status, result, error: errors[0] ?? null };
+  const reciclada = ok && post.status !== "parcial" ? await recyclePost(sb, post as Json).catch(() => null) : null;
+  return { ok: ok > 0, status, result, error: errors[0] ?? null, ...(reciclada ? { reciclada } : {}) };
 }
 
-/** Cria ou altera uma publicação (rascunho, agendada ou para publicar agora) em uma ou várias redes. */
+/** Evergreen: depois de publicar, agenda uma cópia para daqui a N dias (com o próximo texto alternativo). */
+export async function recyclePost(sb: SupabaseClient, post: Json) {
+  const r = post.recycling as Recycling | null;
+  if (!r?.a_cada_dias) return null;
+  const count = ((post.recycle_count as number) ?? 0) + 1;
+  if (r.vezes && count > r.vezes) return null;
+  const at = new Date(Date.now() + r.a_cada_dias * 86_400_000);
+  if (r.ate && at.getTime() > Date.parse(r.ate)) return null;
+  const { data: accs } = await sb.from("channel_accounts").select("id, kind").in("id", (post.channel_account_ids as string[]) ?? []);
+  const keep = (accs ?? []).filter((a) => !NO_RECYCLE.has(a.kind as ChannelId));
+  if (!keep.length) return null;
+  const texts = [String(post.content ?? ""), ...(r.variacoes ?? [])];
+  const content = texts[count % texts.length];
+  const { data } = await sb.from("posts").insert({
+    workspace_id: post.workspace_id, content, title: post.title, custom: r.variacoes?.length ? {} : post.custom, options: post.options, channels: [...new Set(keep.map((a) => LABEL[a.kind as ChannelId] ?? a.kind))],
+    channel_account_ids: keep.map((a) => a.id), media_urls: post.media_urls, media_type: post.media_type, status: "agendada", scheduled_at: at.toISOString(), recycling: r,
+    recycled_from: (post.recycled_from as string | null) ?? post.id, recycle_count: count, source: post.source ?? "app", created_by: post.created_by, result: {}, attempts: 0,
+  }).select("id").single();
+  if (data) await dispatchEvent(sb, post.workspace_id as string, "publicacao.reciclada" as WebhookEvent, { publicacao_id: data.id, original_id: (post.recycled_from as string | null) ?? post.id, vez: count, agendada_para: at.toISOString() });
+  return data ? { id: data.id as string, agendada_para: at.toISOString(), vez: count } : null;
+}
+
+export interface Recycling { a_cada_dias: number; vezes?: number; ate?: string; variacoes?: string[] }
+function cleanRecycling(v: unknown): Recycling | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Json;
+  const days = Math.round(Number(o.a_cada_dias ?? o.everyDays ?? 0));
+  if (!Number.isFinite(days) || days < 1) return null;
+  if (days > 365) throw new PlatformError("Reciclagem: o intervalo vai até 365 dias.");
+  const vezes = o.vezes ? Math.min(100, Math.max(1, Math.round(Number(o.vezes)))) : undefined;
+  const ate = o.ate && !Number.isNaN(Date.parse(String(o.ate))) ? new Date(String(o.ate)).toISOString() : undefined;
+  const variacoes = (Array.isArray(o.variacoes) ? o.variacoes : []).map((x) => String(x).trim()).filter(Boolean).map((x) => x.slice(0, 63206)).slice(0, 10);
+  return { a_cada_dias: days, ...(vezes ? { vezes } : {}), ...(ate ? { ate } : {}), ...(variacoes.length ? { variacoes } : {}) };
+}
+
+/** A regra do espaço exige aprovação para esta publicação? */
+async function needsApproval(ctx: ChannelCtx, asked: boolean) {
+  if (asked) return true;
+  const { data } = await ctx.sb.from("workspaces").select("approval_policy").eq("id", ctx.ws).maybeSingle();
+  const pol = (data?.approval_policy as string | undefined) ?? "nenhuma";
+  const agent = ctx.source === "agente" || ctx.source === "api";
+  if (pol === "todos") return true;
+  if (pol === "membros") return agent || !["owner", "admin"].includes(ctx.role ?? "");
+  if (pol === "agentes") return agent;
+  return false;
+}
+
+/** Cria ou altera uma publicação (rascunho, agendada, na fila ou para publicar agora) em uma ou várias redes. */
 export async function savePost(ctx: ChannelCtx, p: Json) {
   const content = String(p.content ?? "").slice(0, 63206);
   const title = p.title ? String(p.title).slice(0, 255) : null;
@@ -581,20 +671,61 @@ export async function savePost(ctx: ChannelCtx, p: Json) {
   }
   const accountIds = accountIdsRaw();
   const { data: accs } = accountIds.length ? await ctx.sb.from("channel_accounts").select("id, name, kind").eq("workspace_id", ctx.ws).in("id", accountIds).in("kind", PUBLISHABLE) : { data: [] as { id: string; name: string; kind: ChannelId }[] };
+  const kinds = [...new Set((accs ?? []).map((a) => a.kind as ChannelId))];
+  const options = cleanOptions(p.options, kinds.length ? kinds : undefined);
+  // horário próprio por rede (só para redes marcadas, e no futuro)
+  const times: Record<string, string> = {};
+  if (p.mode !== "fila" && mode !== "rascunho") for (const [k, v] of Object.entries((p.times ?? {}) as Json)) {
+    if (!kinds.includes(k as ChannelId) || !v) continue;
+    const d = new Date(String(v));
+    if (Number.isNaN(d.getTime()) || d.getTime() < Date.now() + 60_000) throw new PlatformError(`${LABEL[k as ChannelId] ?? k}: o horário próprio precisa ser no futuro.`);
+    times[k] = d.toISOString();
+  }
+  const recycling = cleanRecycling(p.recycling);
   if (mode !== "rascunho") {
     if (!accs?.length) throw new PlatformError("Escolha ao menos uma conta para publicar.");
-    const chk = checkPost(accs.map((a) => a.kind as ChannelId), { text: content, title: title ?? undefined, custom, mediaUrls, mediaType });
+    const chk = checkPost(kinds, { text: content, title: title ?? undefined, custom, mediaUrls, mediaType, options });
     if (!chk.ok) throw new PlatformError(chk.problemas.join(" "));
   }
-  if (mode === "agendar" && (!when2 || Number.isNaN(when2.getTime()) || when2.getTime() < Date.now() + 60_000)) throw new PlatformError("Escolha uma data e hora no futuro.");
-  const row = { workspace_id: ctx.ws, content, title, custom, channels: [...new Set((accs ?? []).map((a) => LABEL[a.kind as ChannelId] ?? a.kind))], channel_account_ids: (accs ?? []).map((a) => a.id), media_urls: mediaUrls, media_type: mediaType,
-    status: mode === "rascunho" ? "rascunho" : "agendada", scheduled_at: mode === "agendar" ? when2!.toISOString() : mode === "agora" ? now() : null, queue_id: queueId, error: null, attempts: 0, result: {}, updated_at: now() };
+  const allOwn = kinds.length > 0 && kinds.every((k) => times[k]);
+  if (mode === "agendar" && !allOwn && (!when2 || Number.isNaN(when2.getTime()) || when2.getTime() < Date.now() + 60_000)) throw new PlatformError("Escolha uma data e hora no futuro.");
+  const first = [mode === "agendar" && when2 && !Number.isNaN(when2.getTime()) && !allOwn ? when2.getTime() : null, ...Object.values(times).map((t) => Date.parse(t))].filter((x): x is number => typeof x === "number");
+  const scheduled = mode === "agendar" ? new Date(Math.min(...first)).toISOString() : mode === "agora" ? now() : null;
+  const approval = mode !== "rascunho" && (await needsApproval(ctx, p.requiresApproval === true));
+  const status = mode === "rascunho" ? "rascunho" : approval ? "aguardando_aprovacao" : "agendada";
+  const row = { workspace_id: ctx.ws, content, title, custom, options, times, recycling, channels: [...new Set((accs ?? []).map((a) => LABEL[a.kind as ChannelId] ?? a.kind))], channel_account_ids: (accs ?? []).map((a) => a.id), media_urls: mediaUrls, media_type: mediaType,
+    status, scheduled_at: approval && mode === "agora" ? null : scheduled, queue_id: queueId, error: null, attempts: 0, result: {}, reviewed_by: null, reviewed_at: null, review_note: null, updated_at: now() };
   const id = p.id ? String(p.id) : null;
-  const q = id ? ctx.sb.from("posts").update(row).eq("workspace_id", ctx.ws).eq("id", id) : ctx.sb.from("posts").insert({ ...row, created_by: ctx.userId });
+  const q = id ? ctx.sb.from("posts").update(row).eq("workspace_id", ctx.ws).eq("id", id) : ctx.sb.from("posts").insert({ ...row, created_by: ctx.userId, source: ctx.source ?? "app" });
   const { data, error } = await q.select("id").single();
   if (error || !data) throw new Error(error?.message ?? "Não foi possível salvar.");
+  if (approval) {
+    await dispatchEvent(ctx.sb, ctx.ws, "publicacao.aguardando_aprovacao" as WebhookEvent, { publicacao_id: data.id, agendada_para: row.scheduled_at, origem: ctx.source ?? "app" });
+    return { id: data.id as string, ok: true, status, aguardando_aprovacao: true, ...(row.scheduled_at ? { agendada_para: row.scheduled_at } : {}), mensagem: "A publicação foi para aprovação. Um administrador precisa aprovar antes de publicar." };
+  }
   if (mode === "agora") return { id: data.id as string, ...(await publishPost(ctx.sb, ctx.env, data.id as string)) };
-  return { id: data.id as string, ok: true, status: row.status, ...(queueId ? { fila: queueId, agendada_para: row.scheduled_at } : {}) };
+  return { id: data.id as string, ok: true, status: row.status, ...(row.scheduled_at ? { agendada_para: row.scheduled_at } : {}), ...(queueId ? { fila: queueId } : {}) };
+}
+
+/** Aprova (publica ou agenda) ou rejeita (volta para rascunho com o motivo) uma publicação. */
+export async function reviewPost(ctx: ChannelCtx, postId: string, approve: boolean, note?: string) {
+  const { data: post } = await ctx.sb.from("posts").select("id, status, scheduled_at").eq("workspace_id", ctx.ws).eq("id", postId).maybeSingle();
+  if (!post) throw new PlatformError("Publicação não encontrada.");
+  if (post.status !== "aguardando_aprovacao") throw new PlatformError("Esta publicação não está aguardando aprovação.");
+  const base = { reviewed_by: ctx.userId, reviewed_at: now(), review_note: note ? note.slice(0, 1000) : null, updated_at: now() };
+  if (!approve) {
+    await ctx.sb.from("posts").update({ ...base, status: "rascunho", scheduled_at: null }).eq("id", postId);
+    await dispatchEvent(ctx.sb, ctx.ws, "publicacao.rejeitada" as WebhookEvent, { publicacao_id: postId, motivo: base.review_note });
+    return { ok: true, status: "rascunho", rejeitada: true };
+  }
+  const at = post.scheduled_at ? Date.parse(post.scheduled_at as string) : 0;
+  await dispatchEvent(ctx.sb, ctx.ws, "publicacao.aprovada" as WebhookEvent, { publicacao_id: postId, agendada_para: at > Date.now() + 60_000 ? post.scheduled_at : null });
+  if (at > Date.now() + 60_000) {
+    await ctx.sb.from("posts").update({ ...base, status: "agendada" }).eq("id", postId);
+    return { ok: true, status: "agendada", agendada_para: post.scheduled_at };
+  }
+  await ctx.sb.from("posts").update({ ...base, status: "agendada", scheduled_at: now() }).eq("id", postId);
+  return { aprovada: true, ...(await publishPost(ctx.sb, ctx.env, postId, { approved: true })) };
 }
 
 /* ------------------------------------------------------------------ handler HTTP das telas */
@@ -610,7 +741,7 @@ export async function handleChannels(req: Request, env: Env): Promise<Response> 
   const { data: mem } = await sb.from("workspace_members").select("role").eq("workspace_id", ws).eq("user_id", u.user.id).maybeSingle();
   if (!mem) return json(403, { error: "Você não faz parte deste espaço." });
   const isAdmin = ["owner", "admin"].includes(mem.role as string);
-  const ctx: ChannelCtx = { sb, env, ws, userId: u.user.id };
+  const ctx: ChannelCtx = { sb, env, ws, userId: u.user.id, role: mem.role as string, source: "app" };
   const str = (k: string) => String(body[k] ?? "");
   try {
     switch (body.action) {
@@ -678,6 +809,17 @@ export async function handleChannels(req: Request, env: Env): Promise<Response> 
         return json(200, { ok: true });
       }
       case "post_save": return json(200, await savePost(ctx, body));
+      case "post_review": {
+        if (!isAdmin) return json(403, { error: "Só administradores do espaço podem aprovar publicações." });
+        return json(200, await reviewPost(ctx, str("postId"), body.approve === true, body.note ? str("note") : undefined));
+      }
+      case "posts_policy": {
+        if (!isAdmin) return json(403, { error: "Só administradores do espaço podem mudar a regra de aprovação." });
+        const policy = ["nenhuma", "agentes", "membros", "todos"].includes(str("policy")) ? str("policy") : "nenhuma";
+        await sb.from("workspaces").update({ approval_policy: policy, updated_at: now() }).eq("id", ws);
+        return json(200, { ok: true, policy });
+      }
+      case "post_import": return json(200, await importPostsCsv(ctx, str("csv"), { dryRun: body.dryRun !== false, defaultAccountIds: body.accountIds as string[] | undefined }));
       /* ---------------- fila de publicação */
       case "queue_save": {
         if (!isAdmin) return json(403, { error: "Só administradores do espaço podem mudar a fila." });

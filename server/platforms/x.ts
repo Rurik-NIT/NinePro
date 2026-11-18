@@ -3,7 +3,9 @@
  * Publica texto, até 4 imagens ou 1 vídeo (envio de mídia v2 em partes).
  */
 import { createHash, createHmac } from "node:crypto";
-import { blob, download, graphemes, http, PlatformError, sleep, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
+import { blob, download, graphemes, http, optList, optNum, optStr, PlatformError, sleep, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
+
+const tweetId = (s: string) => s.match(/status(?:es)?\/(\d+)/)?.[1] ?? (/^\d{5,25}$/.test(s.trim()) ? s.trim() : "");
 
 const API = "https://api.x.com/2";
 const SCOPES = ["tweet.read", "tweet.write", "users.read", "media.write", "offline.access"];
@@ -91,8 +93,26 @@ export const xProvider: ChannelProvider = {
       ids.push(id);
     }
     if (!text && !ids.length) throw new PlatformError("X: escreva um texto ou adicione mídia.");
-    const r = await x<{ data: { id: string } }>(auth, "/tweets", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...(text ? { text } : {}), ...(ids.length ? { media: { media_ids: ids } } : {}) }) });
+    const o = p.options;
+    const poll = optList(o, "enquete_opcoes");
+    const reply = tweetId(optStr(o, "responder_a")), quote = tweetId(optStr(o, "citar"));
+    const who = optStr(o, "quem_responde");
+    const body: Record<string, unknown> = { ...(text ? { text } : {}), ...(ids.length ? { media: { media_ids: ids } } : {}) };
+    if (poll.length >= 2 && !ids.length) body.poll = { options: poll.slice(0, 4).map((s) => s.slice(0, 25)), duration_minutes: optNum(o, "enquete_minutos") ?? 1440 };
+    if (reply) body.reply = { in_reply_to_tweet_id: reply };
+    else if (quote) body.quote_tweet_id = quote;
+    if (who === "seguidos") body.reply_settings = "following";
+    else if (who === "mencionados") body.reply_settings = "mentionedUsers";
+    const post = (b: Record<string, unknown>) => x<{ data: { id: string } }>(auth, "/tweets", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) });
+    const r = await post(body);
     const user = String(account.detail.usuario ?? "");
-    return { id: r.data.id, permalink: user ? `https://x.com/${user}/status/${r.data.id}` : `https://x.com/i/web/status/${r.data.id}`, aviso: graphemes(text) > 280 ? "Texto acima de 280 caracteres: só contas Premium publicam assim." : undefined };
+    const avisos: string[] = [];
+    if (graphemes(text) > 280) avisos.push("Texto acima de 280 caracteres: só contas Premium publicam assim.");
+    let prev = r.data.id;
+    for (const [i, t] of optList(o, "thread").entries()) {
+      try { prev = (await post({ text: t, reply: { in_reply_to_tweet_id: prev } })).data.id; }
+      catch (e) { avisos.push(`Thread parou no item ${i + 1}: ${(e as Error).message}`); break; }
+    }
+    return { id: r.data.id, permalink: user ? `https://x.com/${user}/status/${r.data.id}` : `https://x.com/i/web/status/${r.data.id}`, aviso: avisos.join(" ") || undefined };
   },
 };
