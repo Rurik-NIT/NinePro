@@ -3,7 +3,7 @@
  * Publica pins de imagem (1 a 5 fotos) ou de vídeo numa pasta (board). Título até 100, descrição até 800.
  * Apps em "Trial access" só criam pins visíveis para a própria conta até o Pinterest liberar o acesso padrão.
  */
-import { download, http, optStr, PlatformError, sleep, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
+import { download, http, optStr, PlatformError, sleep, type PostStat, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
 
 const API = "https://api.pinterest.com/v5";
 const SCOPES = ["boards:read", "boards:write", "pins:read", "pins:write", "user_accounts:read"];
@@ -65,6 +65,22 @@ export const pinterestProvider: ChannelProvider = {
     return [{ externalId: me.id ?? me.username, name: me.username, displayName: me.business_name ?? null, picture: me.profile_image ?? null, status: pastas.length ? "ativo" : "erro", detail: { usuario: me.username, seguidores: me.follower_count ?? null, publicacoes: me.pin_count ?? null, pastas, ...(pastas.length ? {} : { aviso: "Crie uma pasta no Pinterest para poder publicar." }) } }];
   },
   async subscribe() { return null; },
+  async stats(_env, auth, _account, limit) {
+    type P = { id: string; title?: string; description?: string; created_at?: string; media?: { media_type?: string; images?: Record<string, { url: string }> } };
+    const r = await pin<{ items?: P[] }>(auth, `/pins?page_size=${Math.min(limit, 100)}`);
+    const end = new Date().toISOString().slice(0, 10), start = new Date(Date.now() - 89 * 86_400_000).toISOString().slice(0, 10);
+    const out: PostStat[] = [];
+    for (const p of r.items ?? []) {
+      const a = await pin<{ all?: { lifetime_metrics?: Record<string, number>; summary_metrics?: Record<string, number> } }>(auth, `/pins/${p.id}/analytics?start_date=${start}&end_date=${end}&metric_types=IMPRESSION,SAVE,PIN_CLICK,OUTBOUND_CLICK`).catch(() => null);
+      const m = a?.all?.lifetime_metrics ?? a?.all?.summary_metrics ?? {};
+      out.push({ id: p.id, text: p.description || p.title || null, permalink: `https://www.pinterest.com/pin/${p.id}/`, thumbnail: p.media?.images?.["600x"]?.url ?? p.media?.images?.["400x300"]?.url ?? null, type: p.media?.media_type ?? "image", postedAt: p.created_at ?? null, saves: m.SAVE ?? null, impressions: m.IMPRESSION ?? null, clicks: m.PIN_CLICK != null || m.OUTBOUND_CLICK != null ? (m.PIN_CLICK ?? 0) + (m.OUTBOUND_CLICK ?? 0) : null, likes: 0, comments: 0 });
+    }
+    return out;
+  },
+  async accountStats(_env, auth) {
+    const me = await pin<{ follower_count?: number; following_count?: number; pin_count?: number; monthly_views?: number }>(auth, "/user_account");
+    return { followers: me.follower_count ?? null, following: me.following_count ?? null, posts: me.pin_count ?? null, extra: { visualizacoes_mensais: me.monthly_views ?? null } };
+  },
   async publish(_env, auth, account, p) {
     const o = p.options;
     const pastas = (account.detail.pastas as { id: string }[] | undefined) ?? [];

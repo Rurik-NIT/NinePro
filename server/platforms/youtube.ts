@@ -4,7 +4,7 @@
  * Publica um vídeo por vez (vídeo vertical de até 3 minutos vira Short). Título obrigatório (até 100).
  * Atenção: projetos do Google não auditados só podem enviar vídeos como privados.
  */
-import { download, http, optBool, optList, optStr, PlatformError, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
+import { download, http, optBool, optList, optStr, PlatformError, type PostStat, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
 
 /** force-ssl: playlist e primeiro comentário (conexões antigas sem ele recebem um aviso para reconectar). */
 const SCOPES = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly", "https://www.googleapis.com/auth/youtube.force-ssl", "openid", "email"];
@@ -66,6 +66,21 @@ export const youtubeProvider: ChannelProvider = {
     return (r.items ?? []).map((c) => ({ externalId: c.id, name: c.snippet.customUrl ?? c.snippet.title, displayName: c.snippet.title, picture: c.snippet.thumbnails?.default?.url ?? null, status: "ativo", detail: { seguidores: c.statistics?.subscriberCount ? Number(c.statistics.subscriberCount) : null, publicacoes: c.statistics?.videoCount ? Number(c.statistics.videoCount) : null } }));
   },
   async subscribe() { return null; },
+  async stats(_env, auth, account, limit) {
+    const ch = await yt<{ items?: { contentDetails?: { relatedPlaylists?: { uploads?: string } } }[] }>(auth, `https://www.googleapis.com/youtube/v3/channels?part=contentDetails&id=${encodeURIComponent(account.externalId)}`);
+    const uploads = ch.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
+    if (!uploads) return [];
+    const pl = await yt<{ items?: { contentDetails: { videoId: string } }[] }>(auth, `https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=${Math.min(limit, 50)}&playlistId=${uploads}`);
+    const ids = (pl.items ?? []).map((i) => i.contentDetails.videoId);
+    if (!ids.length) return [];
+    const v = await yt<{ items?: { id: string; snippet: { title: string; publishedAt: string; thumbnails?: { medium?: { url: string } } }; statistics?: { viewCount?: string; likeCount?: string; commentCount?: string } }[] }>(auth, `https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&id=${ids.join(",")}`);
+    return (v.items ?? []).map((x): PostStat => ({ id: x.id, text: x.snippet.title, permalink: `https://www.youtube.com/watch?v=${x.id}`, thumbnail: x.snippet.thumbnails?.medium?.url ?? null, type: "video", postedAt: x.snippet.publishedAt, likes: Number(x.statistics?.likeCount ?? 0), comments: Number(x.statistics?.commentCount ?? 0), views: Number(x.statistics?.viewCount ?? 0) }));
+  },
+  async accountStats(_env, auth, account) {
+    const r = await yt<{ items?: { statistics?: { subscriberCount?: string; videoCount?: string; viewCount?: string } }[] }>(auth, `https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${encodeURIComponent(account.externalId)}`);
+    const s = r.items?.[0]?.statistics;
+    return { followers: s?.subscriberCount ? Number(s.subscriberCount) : null, posts: s?.videoCount ? Number(s.videoCount) : null, extra: { visualizacoes_totais: s?.viewCount ? Number(s.viewCount) : null } };
+  },
   async publish(_env, auth, _account, p) {
     const video = p.media.find((m) => m.type === "video");
     if (!video) throw new PlatformError("YouTube: adicione um vídeo.");

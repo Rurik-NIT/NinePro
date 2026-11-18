@@ -4,10 +4,11 @@
  * Vídeo: envio do arquivo em partes (FILE_UPLOAD). Fotos: PULL_FROM_URL (o domínio das mídias precisa estar verificado no app).
  * Apps ainda não auditados pelo TikTok só publicam como privado (SELF_ONLY).
  */
-import { download, http, optBool, optNum, optStr, PlatformError, sleep, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
+import { download, http, optBool, optNum, optStr, PlatformError, sleep, type PostStat, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
 
 const API = "https://open.tiktokapis.com/v2";
-const SCOPES = ["user.info.basic", "user.info.profile", "user.info.stats", "video.publish", "video.upload"];
+/** video.list: análises dos vídeos (conexões antigas sem ela recebem aviso para reconectar). */
+const SCOPES = ["user.info.basic", "user.info.profile", "user.info.stats", "video.publish", "video.upload", "video.list"];
 const expired = (s: number, b: Record<string, unknown>) => s === 401 || (b.error as { code?: string } | undefined)?.code === "access_token_invalid";
 const call = <T>(a: StoredAuth, path: string, body?: unknown) => http<T>("TikTok", `${API}${path}`, body === undefined ? { headers: { authorization: `Bearer ${a.accessToken}` } } : { method: "POST", headers: { authorization: `Bearer ${a.accessToken}`, "content-type": "application/json; charset=UTF-8" }, body: JSON.stringify(body) }, expired);
 const creds = (env: Env, a?: StoredAuth) => ({ key: a?.extra?.clientKey || env.TIKTOK_CLIENT_KEY || "", secret: a?.extra?.clientSecret || env.TIKTOK_CLIENT_SECRET || "" });
@@ -62,6 +63,19 @@ export const tiktokSocialProvider: ChannelProvider = {
     return [{ externalId: u.open_id, name: u.username ? `@${u.username}` : u.display_name ?? "TikTok", displayName: u.display_name ?? null, picture: u.avatar_url ?? null, status: "ativo", detail: { usuario: u.username ?? null, seguidores: u.follower_count ?? null, publicacoes: u.video_count ?? null } }];
   },
   async subscribe() { return null; },
+  async stats(_env, auth, account, limit) {
+    type V = { id: string; title?: string; video_description?: string; create_time?: number; cover_image_url?: string; share_url?: string; view_count?: number; like_count?: number; comment_count?: number; share_count?: number };
+    const r = await call<{ data: { videos?: V[] } }>(auth, "/video/list/?fields=id,title,video_description,create_time,cover_image_url,share_url,view_count,like_count,comment_count,share_count", { max_count: Math.min(limit, 20) }).catch((e) => {
+      throw new PlatformError(/scope|permission/i.test((e as Error).message) ? "TikTok: reconecte a conta para liberar as análises dos vídeos." : (e as Error).message, (e as PlatformError).expired);
+    });
+    const user = String(account.detail.usuario ?? "");
+    return (r.data.videos ?? []).map((v): PostStat => ({ id: v.id, text: v.video_description || v.title || null, permalink: v.share_url ?? (user ? `https://www.tiktok.com/@${user}/video/${v.id}` : null), thumbnail: v.cover_image_url ?? null, type: "video", postedAt: v.create_time ? new Date(v.create_time * 1000).toISOString() : null, likes: v.like_count ?? 0, comments: v.comment_count ?? 0, shares: v.share_count ?? 0, views: v.view_count ?? 0 }));
+  },
+  async accountStats(_env, auth) {
+    const r = await call<{ data: { user: { follower_count?: number; following_count?: number; likes_count?: number; video_count?: number } } }>(auth, "/user/info/?fields=follower_count,following_count,likes_count,video_count");
+    const u = r.data.user;
+    return { followers: u.follower_count ?? null, following: u.following_count ?? null, posts: u.video_count ?? null, extra: { curtidas_totais: u.likes_count ?? null } };
+  },
   async publish(_env, auth, account, p) {
     const info = await call<{ data: { privacy_level_options?: string[]; max_video_post_duration_sec?: number } }>(auth, "/post/publish/creator_info/query/", {});
     const opts = info.data.privacy_level_options ?? ["SELF_ONLY"];

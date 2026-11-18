@@ -2,7 +2,7 @@
  * Bluesky — AT Protocol. Conexão só por token: o @usuário e uma senha de app (Configurações › Senhas de app).
  * Publica texto (até 300 caracteres) com links e hashtags clicáveis, até 4 imagens ou 1 vídeo.
  */
-import { download, graphemes, http, optList, PlatformError, type ChannelProvider, type Env, type StoredAuth } from "./types.js";
+import { download, graphemes, http, optList, PlatformError, type PostStat, type ChannelProvider, type Env, type StoredAuth } from "./types.js";
 
 const DEFAULT = "https://bsky.social";
 interface Session { did: string; handle: string; accessJwt: string; refreshJwt: string }
@@ -65,6 +65,16 @@ export const blueskyProvider: ChannelProvider = {
     return [{ externalId: p.did, name: `@${p.handle}`, displayName: p.displayName ?? null, picture: p.avatar ?? null, status: "ativo", detail: { seguidores: p.followersCount ?? null, publicacoes: p.postsCount ?? null, usuario: p.handle } }];
   },
   async subscribe() { return null; },
+  async stats(_env, auth, account, limit) {
+    type F = { post: { uri: string; record?: { text?: string; createdAt?: string }; likeCount?: number; replyCount?: number; repostCount?: number; quoteCount?: number; embed?: { $type?: string; thumbnail?: string; images?: { thumb?: string }[] } }; reason?: unknown };
+    const r = await xrpc<{ feed?: F[] }>(svc(auth), `app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(auth.extra?.did ?? account.externalId)}&limit=${Math.min(limit, 100)}&filter=posts_no_replies`, { headers: bearer(auth) });
+    const handle = String(account.detail.usuario ?? auth.extra?.handle ?? "");
+    return (r.feed ?? []).filter((f) => !f.reason).map((f): PostStat => ({ id: f.post.uri, text: f.post.record?.text ?? null, permalink: handle ? `https://bsky.app/profile/${handle}/post/${f.post.uri.split("/").pop()}` : null, thumbnail: f.post.embed?.thumbnail ?? f.post.embed?.images?.[0]?.thumb ?? null, type: f.post.embed?.$type?.split(".").pop()?.replace("#view", "") ?? "texto", postedAt: f.post.record?.createdAt ?? null, likes: f.post.likeCount ?? 0, comments: f.post.replyCount ?? 0, shares: (f.post.repostCount ?? 0) + (f.post.quoteCount ?? 0) }));
+  },
+  async accountStats(_env, auth, account) {
+    const p = await xrpc<{ followersCount?: number; followsCount?: number; postsCount?: number }>(svc(auth), `app.bsky.actor.getProfile?actor=${encodeURIComponent(auth.extra?.did ?? account.externalId)}`, { headers: bearer(auth) });
+    return { followers: p.followersCount ?? null, following: p.followsCount ?? null, posts: p.postsCount ?? null };
+  },
   async publish(_env: Env, auth, account, p) {
     const service = svc(auth);
     const text = p.text.trim();

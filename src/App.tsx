@@ -45,6 +45,7 @@ const analytics = () => import("@/pages/analytics/Analytics");
 const liveInbox = () => import("@/pages/channels/LiveInbox");
 const liveSocial = () => import("@/pages/channels/LiveSocial");
 const liveExtras = () => import("@/pages/channels/LiveExtras");
+const liveAnalytics = () => import("@/pages/channels/LiveAnalytics");
 const liveWs = () => import("@/pages/live/LiveWorkspace");
 const liveQueues = () => import("@/pages/channels/LiveQueues");
 const LiveRules = lazy(() => import("@/pages/automations/LiveRules"));
@@ -89,7 +90,7 @@ const router = createBrowserRouter([
       { path: "publicacoes/hashtags", element: <Navigate to="/conexoes" replace /> },
       { path: "ao-vivo", element: <Navigate to="/conexoes" replace /> },
 
-      { path: "analises/publicacoes", element: L(N(liveExtras, "LivePostAnalytics"), N(analytics, "AnalyticsPosting")) },
+      { path: "analises/publicacoes", element: L(N(liveAnalytics, "LiveAnalytics"), N(analytics, "AnalyticsPosting")) },
       { path: "analises/caixa-de-entrada", element: L(N(liveExtras, "LiveInboxAnalytics"), N(analytics, "AnalyticsInbox")) },
       { path: "analises/site", element: L(N(liveWs, "LiveSiteAnalytics"), N(analytics, "AnalyticsWebsite")) },
 

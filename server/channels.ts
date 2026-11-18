@@ -12,6 +12,7 @@ import { CHANNELS, graphemes, isChannel, isVideoUrl, PlatformError, PUBLISHABLE,
 import { optList, optStr, type NetOptions } from "./platforms/types.js";
 import { checkOptions, cleanOptions, type OptKind, type PostOptions } from "../src/config/postOptions.js";
 import { importPostsCsv } from "./postImport.js";
+import { loadAnalytics } from "./analytics.js";
 import * as IG from "./platforms/instagram.js";
 import * as WA from "./platforms/whatsapp.js";
 import type { WebhookEvent } from "./events.js";
@@ -139,8 +140,10 @@ export async function syncChannel(sb: SupabaseClient, env: Env, conn: { id: stri
         const t = tokenOf(auth);
         try { detail.comentarios = await backfillComments(sb, env, t, acc); } catch (e) { warnings.push(`Comentários: ${msg(e)}`); }
         try { detail.conversas = await backfillDirect(sb, env, t, acc); } catch (e) { warnings.push(`Mensagens diretas: ${msg(e)}`); }
-        try { detail.publicacoes = await syncMediaStats(sb, env, t, acc); } catch (e) { warnings.push(`Estatísticas: ${msg(e)}`); }
       }
+    }
+    if (prov.stats || prov.accountStats) for (const acc of accounts) {
+      try { detail.publicacoes = Number(detail.publicacoes ?? 0) + await syncStats(sb, env, acc, auth); } catch (e) { warnings.push(`Análises (${acc.name}): ${msg(e)}`); }
     }
     if (warnings.length) detail.avisos = warnings.slice(0, 10);
     await sb.from("platform_connections").update({ status: "ativa", last_error: warnings[0] ?? null, last_synced_at: now(), updated_at: now() }).eq("id", conn.id);
@@ -811,6 +814,8 @@ export async function handleChannels(req: Request, env: Env): Promise<Response> 
         return json(200, { ok: true });
       }
       case "post_save": return json(200, await savePost(ctx, body));
+      case "analytics": return json(200, await loadAnalytics(sb, ws, { days: Math.min(365, Math.max(1, Number(body.days ?? 30))), kinds: Array.isArray(body.kinds) ? (body.kinds as string[]).filter(isChannel) : undefined, accountId: body.accountId ? str("accountId") : undefined, limit: 20, labels: LABEL }));
+      case "stats_refresh": return json(200, { atualizadas: await refreshMediaStats(sb, env, ws, body.accountId ? str("accountId") : undefined) });
       case "post_review": {
         if (!isAdmin) return json(403, { error: "Só administradores do espaço podem aprovar publicações." });
         return json(200, await reviewPost(ctx, str("postId"), body.approve === true, body.note ? str("note") : undefined));
@@ -1042,24 +1047,49 @@ export async function processBroadcasts(sb: SupabaseClient, env: Env, budgetMs: 
 
 /* ------------------------------------------------------------------ estatísticas das publicações do Instagram */
 /** Atualiza as estatísticas das publicações das contas do Instagram do espaço (usado pelos agentes). */
-export async function refreshMediaStats(sb: SupabaseClient, env: Env, ws: string, accountId?: string) {
-  let q = sb.from("channel_accounts").select(ACCOUNT_COLS).eq("workspace_id", ws).eq("kind", "instagram").eq("status", "ativo");
+/** Atualiza as análises (publicações e números da conta) das contas do espaço. Todas as redes que informam métricas. */
+export async function refreshMediaStats(sb: SupabaseClient, env: Env, ws: string, accountId?: string, kinds?: ChannelId[]) {
+  const withStats = (Object.keys(CHANNELS) as ChannelId[]).filter((k) => CHANNELS[k].stats || CHANNELS[k].accountStats);
+  let q = sb.from("channel_accounts").select(`${ACCOUNT_COLS}, detail`).eq("workspace_id", ws).in("kind", kinds?.length ? kinds.filter((k) => withStats.includes(k)) : withStats).eq("status", "ativo").not("connection_id", "is", null);
   if (accountId) q = q.eq("id", accountId);
   const { data: accs } = await q;
   const out: Record<string, number | string> = {};
-  for (const acc of (accs ?? []) as Account[]) {
-    try { out[acc.name] = await syncMediaStats(sb, env, tokenOf(await channelAuth(sb, env, "instagram", acc.connection_id)), acc); }
-    catch (e) { out[acc.name] = `erro: ${msg(e)}`; }
+  for (const acc of (accs ?? []) as (Account & { detail: Json })[]) {
+    const label = `${LABEL[acc.kind] ?? acc.kind} ${acc.name}`;
+    try { out[label] = await syncStats(sb, env, acc, await channelAuth(sb, env, acc.kind, acc.connection_id)); }
+    catch (e) { out[label] = `erro: ${msg(e)}`; }
   }
   return out;
 }
-async function syncMediaStats(sb: SupabaseClient, env: Env, token: string, acc: Account) {
-  const media = await IG.igRecentMedia(env, token, 25);
-  const rows = [];
-  for (const m of media) {
-    const ins = await IG.igMediaInsights(env, token, m.id, m.media_type);
-    rows.push({ channel_account_id: acc.id, media_id: m.id, workspace_id: acc.workspace_id, caption: m.caption ?? null, permalink: m.permalink ?? null, thumbnail: m.thumbnail_url ?? m.media_url ?? null, media_type: m.media_type ?? null, posted_at: m.timestamp ?? null, likes: m.like_count ?? 0, comments: m.comments_count ?? 0, reach: ins.reach ?? null, views: ins.views ?? null, saved: ins.saved ?? null, shares: ins.shares ?? null, updated_at: now() });
+const brDay = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
+const intOrNull = (v: unknown) => (v == null || !Number.isFinite(Number(v)) ? null : Math.round(Number(v)));
+/** Busca as métricas de uma conta e grava: publicações (social_media_stats) e a foto do dia (account_stats_daily). */
+export async function syncStats(sb: SupabaseClient, env: Env, acc: Account & { detail?: Json }, auth: StoredAuth) {
+  const prov = CHANNELS[acc.kind];
+  const pa = { externalId: acc.external_id, name: acc.name, detail: acc.detail ?? {} };
+  let count = 0; let firstErr: unknown = null;
+  if (prov?.stats) {
+    try {
+      const list = await prov.stats(env, auth, pa, 25);
+      // liga à publicação feita pelo NinePro (mesmo ID na rede)
+      const { data: mine } = await sb.from("posts").select("id, result").eq("workspace_id", acc.workspace_id).in("status", ["publicada", "parcial", "agendada"]).contains("channel_account_ids", [acc.id]).order("created_at", { ascending: false }).limit(300);
+      const byMedia = new Map<string, string>();
+      for (const p of mine ?? []) { const r = ((p.result ?? {}) as Record<string, { id?: string }>)[acc.id]; if (r?.id) byMedia.set(r.id, p.id as string); }
+      const rows = list.filter((m) => m.id).map((m) => ({ channel_account_id: acc.id, media_id: m.id, workspace_id: acc.workspace_id, kind: acc.kind, caption: m.text ?? null, permalink: m.permalink ?? null, thumbnail: m.thumbnail ?? null, media_type: m.type ?? null, posted_at: m.postedAt ?? null,
+        likes: intOrNull(m.likes) ?? 0, comments: intOrNull(m.comments) ?? 0, shares: intOrNull(m.shares), saved: intOrNull(m.saves), views: intOrNull(m.views), impressions: intOrNull(m.impressions), reach: intOrNull(m.reach), clicks: intOrNull(m.clicks), post_id: byMedia.get(m.id) ?? null, updated_at: now() }));
+      if (rows.length) { const { error } = await sb.from("social_media_stats").upsert(rows, { onConflict: "channel_account_id,media_id" }); if (error) throw new Error(error.message); }
+      count = rows.length;
+    } catch (e) { firstErr = e; }
   }
-  if (rows.length) await sb.from("social_media_stats").upsert(rows, { onConflict: "channel_account_id,media_id" });
-  return rows.length;
+  if (prov?.accountStats) {
+    try {
+      const st = await prov.accountStats(env, auth, pa);
+      if (st && Object.values(st).some((v) => v != null)) {
+        await sb.from("account_stats_daily").upsert({ channel_account_id: acc.id, day: brDay(), workspace_id: acc.workspace_id, kind: acc.kind, followers: intOrNull(st.followers), following: intOrNull(st.following), posts: intOrNull(st.posts), impressions: intOrNull(st.impressions), reach: intOrNull(st.reach), profile_views: intOrNull(st.profileViews), extra: st.extra ?? {}, updated_at: now() }, { onConflict: "channel_account_id,day" });
+        if (st.followers != null) await sb.from("channel_accounts").update({ detail: { ...(acc.detail ?? {}), seguidores: intOrNull(st.followers) } }).eq("id", acc.id);
+      }
+    } catch (e) { firstErr ??= e; }
+  }
+  if (firstErr && !count) throw firstErr;
+  return count;
 }

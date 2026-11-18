@@ -3,7 +3,7 @@
  * com o produto "Share on LinkedIn" (perfil) e, se aprovado, "Community Management API" (Páginas da empresa).
  * Opcionais: LINKEDIN_SOCIAL_SCOPES, LINKEDIN_API_VERSION.
  */
-import { download, http, optList, optStr, PlatformError, sleep, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
+import { download, http, optList, optStr, PlatformError, sleep, type PostStat, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
 
 const API = "https://api.linkedin.com/rest";
 export const LIS_DEFAULT_SCOPES = "openid profile w_member_social";
@@ -61,6 +61,27 @@ export const linkedinSocialProvider: ChannelProvider = {
     return out;
   },
   async subscribe() { return null; },
+  async stats(env, auth, account, limit) {
+    if (!account.externalId.includes(":organization:")) return []; // o LinkedIn só libera números de Páginas da empresa (Community Management API)
+    type P = { id: string; commentary?: string; publishedAt?: number; createdAt?: number; content?: Record<string, unknown> };
+    const r = await li<{ elements?: P[] }>(env, auth, `/posts?author=${enc(account.externalId)}&q=author&count=${Math.min(limit, 50)}`, { headers: { "X-RestLi-Method": "FINDER" } });
+    const out: PostStat[] = [];
+    for (const p of r.elements ?? []) {
+      const field = p.id.includes(":ugcPost:") ? "ugcPosts" : "shares";
+      const st = await li<{ elements?: { totalShareStatistics?: { impressionCount?: number; uniqueImpressionsCount?: number; clickCount?: number; likeCount?: number; commentCount?: number; shareCount?: number } }[] }>(env, auth, `/organizationalEntityShareStatistics?q=organizationalEntity&organizationalEntity=${enc(account.externalId)}&${field}=List(${enc(p.id)})`).catch(() => ({ elements: [] }));
+      const s = st.elements?.[0]?.totalShareStatistics;
+      const meta = s ? null : await li<{ reactionSummaries?: Record<string, { count?: number }>; commentSummary?: { count?: number } }>(env, auth, `/socialMetadata/${enc(p.id)}`).catch(() => null);
+      const likes = s?.likeCount ?? Object.values(meta?.reactionSummaries ?? {}).reduce((a, x) => a + (x.count ?? 0), 0);
+      const at = p.publishedAt ?? p.createdAt;
+      out.push({ id: p.id, text: p.commentary?.replace(/\\(.)/g, "$1") ?? null, permalink: `https://www.linkedin.com/feed/update/${p.id}/`, type: p.content ? Object.keys(p.content)[0] : "texto", postedAt: at ? new Date(at).toISOString() : null, likes, comments: s?.commentCount ?? meta?.commentSummary?.count ?? 0, shares: s?.shareCount ?? null, impressions: s?.impressionCount ?? null, reach: s?.uniqueImpressionsCount ?? null, clicks: s?.clickCount ?? null });
+    }
+    return out;
+  },
+  async accountStats(env, auth, account) {
+    if (!account.externalId.includes(":organization:")) return {};
+    const r = await li<{ firstDegreeSize?: number }>(env, auth, `/networkSizes/${enc(account.externalId)}?edgeType=COMPANY_FOLLOWED_BY_MEMBER`);
+    return { followers: r.firstDegreeSize ?? null };
+  },
   async publish(env, auth, account, p) {
     const owner = account.externalId;
     const images = p.media.filter((m) => m.type === "image");

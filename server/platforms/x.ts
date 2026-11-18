@@ -3,7 +3,7 @@
  * Publica texto, até 4 imagens ou 1 vídeo (envio de mídia v2 em partes).
  */
 import { createHash, createHmac } from "node:crypto";
-import { blob, download, graphemes, http, optList, optNum, optStr, PlatformError, sleep, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
+import { blob, download, graphemes, http, optList, optNum, optStr, PlatformError, sleep, type PostStat, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
 
 const tweetId = (s: string) => s.match(/status(?:es)?\/(\d+)/)?.[1] ?? (/^\d{5,25}$/.test(s.trim()) ? s.trim() : "");
 
@@ -65,6 +65,17 @@ export const xProvider: ChannelProvider = {
     return [{ externalId: u.id, name: `@${u.username}`, displayName: u.name, picture: u.profile_image_url ?? null, status: "ativo", detail: { usuario: u.username, seguidores: u.public_metrics?.followers_count ?? null, publicacoes: u.public_metrics?.tweet_count ?? null } }];
   },
   async subscribe() { return null; },
+  async stats(_env, auth, account, limit) {
+    type T = { id: string; text: string; created_at?: string; public_metrics?: { like_count?: number; reply_count?: number; retweet_count?: number; quote_count?: number; bookmark_count?: number; impression_count?: number }; attachments?: { media_keys?: string[] } };
+    const r = await x<{ data?: T[] }>(auth, `/users/${account.externalId}/tweets?max_results=${Math.max(5, Math.min(limit, 100))}&exclude=replies,retweets&tweet.fields=created_at,public_metrics,attachments`);
+    const user = String(account.detail.usuario ?? "");
+    return (r.data ?? []).map((t): PostStat => { const m = t.public_metrics ?? {}; return { id: t.id, text: t.text, permalink: user ? `https://x.com/${user}/status/${t.id}` : `https://x.com/i/web/status/${t.id}`, type: t.attachments?.media_keys?.length ? "midia" : "texto", postedAt: t.created_at ?? null, likes: m.like_count ?? 0, comments: m.reply_count ?? 0, shares: (m.retweet_count ?? 0) + (m.quote_count ?? 0), saves: m.bookmark_count ?? null, impressions: m.impression_count ?? null }; });
+  },
+  async accountStats(_env, auth) {
+    const me = await x<{ data: { public_metrics?: { followers_count?: number; following_count?: number; tweet_count?: number } } }>(auth, "/users/me?user.fields=public_metrics");
+    const m = me.data.public_metrics ?? {};
+    return { followers: m.followers_count ?? null, following: m.following_count ?? null, posts: m.tweet_count ?? null };
+  },
   async publish(_env, auth, account, p) {
     const text = p.text.trim();
     const ids: string[] = [];

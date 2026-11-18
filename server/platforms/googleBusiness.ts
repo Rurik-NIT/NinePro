@@ -68,6 +68,18 @@ export const googleBusinessProvider: ChannelProvider = {
     return out;
   },
   async subscribe() { return null; },
+  async accountStats(_env, auth, account) {
+    const loc = account.externalId.split("/").slice(-2).join("/");
+    const d = new Date(Date.now() - 86_400_000);
+    const day = { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
+    const metrics = ["BUSINESS_IMPRESSIONS_DESKTOP_MAPS", "BUSINESS_IMPRESSIONS_DESKTOP_SEARCH", "BUSINESS_IMPRESSIONS_MOBILE_MAPS", "BUSINESS_IMPRESSIONS_MOBILE_SEARCH", "CALL_CLICKS", "WEBSITE_CLICKS", "BUSINESS_DIRECTION_REQUESTS"];
+    const qs = new URLSearchParams(); for (const m of metrics) qs.append("dailyMetrics", m);
+    for (const [k, v] of Object.entries(day)) { qs.set(`dailyRange.start_date.${k}`, String(v)); qs.set(`dailyRange.end_date.${k}`, String(v)); }
+    type S = { multiDailyMetricTimeSeries?: { dailyMetricTimeSeries?: { dailyMetric: string; timeSeries?: { datedValues?: { value?: string }[] } }[] }[] };
+    const r = await g<S>(auth, `https://businessprofileperformance.googleapis.com/v1/${loc}:fetchMultiDailyMetricsTimeSeries?${qs}`);
+    const val = (m: string) => (r.multiDailyMetricTimeSeries ?? []).flatMap((x) => x.dailyMetricTimeSeries ?? []).filter((x) => x.dailyMetric === m).flatMap((x) => x.timeSeries?.datedValues ?? []).reduce((s, x) => s + Number(x.value ?? 0), 0);
+    return { impressions: metrics.slice(0, 4).reduce((s, m) => s + val(m), 0), extra: { ligacoes: val("CALL_CLICKS"), cliques_no_site: val("WEBSITE_CLICKS"), pedidos_de_rota: val("BUSINESS_DIRECTION_REQUESTS") } };
+  },
   async publish(_env, auth, account, p) {
     const o = p.options;
     const type = optStr(o, "tipo") || "STANDARD";

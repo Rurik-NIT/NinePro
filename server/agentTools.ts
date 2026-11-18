@@ -8,6 +8,8 @@ import { applyCampaignStatus } from "./connections.js";
 import { channelLabel, checkPost, createBroadcast, publishPost, refreshMediaStats, replyComment, savePost, sendTemplate, sendToConversation, type ChannelCtx } from "./channels.js";
 import { cleanOptions, describeOptions, POST_OPTIONS, type OptKind } from "../src/config/postOptions.js";
 import { importPostsCsv } from "./postImport.js";
+import { loadAnalytics } from "./analytics.js";
+const CHANNEL_LABELS: Record<string, string> = Object.fromEntries(Object.entries(CHANNELS).map(([k, v]) => [k, v.label]));
 import { CHANNELS, PUBLISHABLE, type ChannelId } from "./platforms/index.js";
 import { listUploads, makeUploadToken, readUploadToken } from "./media.js";
 import { WEBHOOK_EVENTS } from "./events.js";
@@ -474,53 +476,42 @@ export const TOOLS: Tool[] = [
     },
   },
   {
-    name: "analisar_publicacoes", title: "Analisar publicações do Instagram", write: false,
-    description: "Desempenho das publicações do Instagram no período: totais, médias, o que funciona por formato (reels, imagem, carrossel), por dia da semana e horário (Brasília), e as melhores e piores publicações com legenda e link. Use para decidir o que publicar em seguida.",
+    name: "analisar_publicacoes", title: "Analisar publicações de todas as redes", write: false,
+    description: "Desempenho das publicações no período em todas as redes conectadas (Instagram, Facebook, Threads, LinkedIn de empresa, YouTube, TikTok, X, Pinterest e Bluesky) — inclusive as feitas fora do NinePro: totais, taxa de engajamento, comparação por rede e por formato, melhor dia e horário (Brasília, pelo desempenho relativo de cada conta), frequência × engajamento, crescimento de seguidores e as melhores e piores publicações com link. Use para decidir o que, onde e quando publicar.",
     input: { type: "object", properties: {
       dias: { type: "integer", minimum: 1, maximum: 365, default: 90, description: "Janela em dias até hoje." },
-      conta_id: { type: "string", format: "uuid", description: "Uma conta do Instagram (listar_contas_conectadas). Vazio = todas." },
-      ordenar_por: { type: "string", enum: ["engajamento", "alcance", "visualizacoes", "curtidas", "comentarios", "salvamentos", "compartilhamentos"], default: "engajamento" },
+      redes: { type: "array", items: { type: "string" }, description: "Filtra por rede: instagram, facebook, threads, linkedin_social, youtube, tiktok_social, x, pinterest, google_business, telegram, slack, bluesky. Vazio = todas." },
+      conta_id: { type: "string", format: "uuid", description: "Uma conta (listar_contas_conectadas). Vazio = todas." },
+      ordenar_por: { type: "string", enum: ["engajamento", "alcance", "visualizacoes", "impressoes", "curtidas", "comentarios", "salvamentos", "compartilhamentos", "cliques"], default: "engajamento" },
       limite: { type: "integer", minimum: 1, maximum: 50, default: 10 },
-      atualizar: { type: "boolean", default: false, description: "Busca os números mais recentes no Instagram antes de analisar (mais lento)." },
+      atualizar: { type: "boolean", default: false, description: "Busca os números mais recentes nas redes antes de analisar (mais lento)." },
     }, additionalProperties: false },
     run: async (ctx, a) => {
       const contaId = a.conta_id ? needUuid(a.conta_id, "conta_id") : undefined;
-      const atualizadas = a.atualizar === true ? await refreshMediaStats(ctx.sb, ctx.env, ctx.ws, contaId) : undefined;
-      const periodo = int(a.dias, 90, 1, 365);
-      const since = new Date(Date.now() - periodo * DAY).toISOString();
-      let mq = ctx.sb.from("social_media_stats").select("channel_account_id, media_id, caption, permalink, media_type, posted_at, likes, comments, reach, views, saved, shares").eq("workspace_id", ctx.ws).gte("posted_at", since).order("posted_at", { ascending: false }).limit(1000);
-      if (contaId) mq = mq.eq("channel_account_id", contaId);
-      const rows = await q<Json[]>(mq);
-      const n = (v: unknown) => Number(v ?? 0) || 0;
-      type Item = { midia_id: string; formato: string; publicada_em: string | null; legenda: string; link: unknown; curtidas: number; comentarios: number; alcance: number | null; visualizacoes: number | null; salvamentos: number | null; compartilhamentos: number | null; engajamento: number; taxa_engajamento: number | null };
-      type NumKey = "curtidas" | "comentarios" | "alcance" | "visualizacoes" | "salvamentos" | "compartilhamentos" | "engajamento";
-      const items: Item[] = rows.map((r) => {
-        const eng = n(r.likes) + n(r.comments) + n(r.saved) + n(r.shares);
-        return { midia_id: String(r.media_id), formato: String(r.media_type ?? "—"), publicada_em: (r.posted_at as string | null) ?? null, legenda: String(r.caption ?? "").slice(0, 280), link: r.permalink, curtidas: n(r.likes), comentarios: n(r.comments), alcance: r.reach == null ? null : n(r.reach), visualizacoes: r.views == null ? null : n(r.views), salvamentos: r.saved == null ? null : n(r.saved), compartilhamentos: r.shares == null ? null : n(r.shares), engajamento: eng, taxa_engajamento: n(r.reach) ? round((eng / n(r.reach)) * 100, 2) : null };
-      });
-      if (!items.length) return { publicacoes: 0, aviso: "Nenhuma publicação com estatísticas no período. Confira se o Instagram está conectado (listar_contas_conectadas) ou use atualizar=true.", atualizadas };
-      const keys: Record<string, NumKey> = { engajamento: "engajamento", alcance: "alcance", visualizacoes: "visualizacoes", curtidas: "curtidas", comentarios: "comentarios", salvamentos: "salvamentos", compartilhamentos: "compartilhamentos" };
-      const key = keys[str(a.ordenar_por, 30)] ?? "engajamento";
-      const sorted = [...items].sort((x, y) => n(y[key]) - n(x[key]));
-      const sum = (k: NumKey) => items.reduce((acc, it) => acc + n(it[k]), 0);
-      const avg = (list: Item[], k: NumKey) => (list.length ? round(list.reduce((acc, it) => acc + n(it[k]), 0) / list.length, 1) : 0);
-      const group = (fn: (it: Item) => string) => {
-        const m = new Map<string, Item[]>();
-        for (const it of items) { const g = fn(it); m.set(g, [...(m.get(g) ?? []), it]); }
-        return [...m.entries()].map(([g, list]) => ({ grupo: g, publicacoes: list.length, engajamento_medio: avg(list, "engajamento"), alcance_medio: avg(list, "alcance"), visualizacoes_medias: avg(list, "visualizacoes") })).sort((x, y) => y.engajamento_medio - x.engajamento_medio);
-      };
-      const local = (iso: string, opt: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Sao_Paulo", ...opt }).format(new Date(iso));
-      const limite = int(a.limite, 10, 1, 50);
-      return {
-        periodo_dias: periodo, publicacoes: items.length, atualizadas,
-        totais: { curtidas: sum("curtidas"), comentarios: sum("comentarios"), alcance: sum("alcance"), visualizacoes: sum("visualizacoes"), salvamentos: sum("salvamentos"), compartilhamentos: sum("compartilhamentos"), engajamento: sum("engajamento") },
-        medias_por_publicacao: { engajamento: avg(items, "engajamento"), alcance: avg(items, "alcance"), visualizacoes: avg(items, "visualizacoes"), curtidas: avg(items, "curtidas"), comentarios: avg(items, "comentarios") },
-        por_formato: group((it) => it.formato),
-        por_dia_da_semana: group((it) => (it.publicada_em ? local(it.publicada_em, { weekday: "long" }) : "—")),
-        por_horario: group((it) => (it.publicada_em ? `${local(it.publicada_em, { hour: "2-digit", hourCycle: "h23" })}h` : "—")).slice(0, 8),
-        melhores: sorted.slice(0, limite),
-        piores: sorted.length > limite ? sorted.slice(-Math.min(5, sorted.length - limite)).reverse() : [],
-      };
+      const kinds = (Array.isArray(a.redes) ? a.redes.map((r) => str(r, 30)) : []).filter((k) => k in CHANNEL_LABELS);
+      const atualizadas = a.atualizar === true ? await refreshMediaStats(ctx.sb, ctx.env, ctx.ws, contaId, kinds as ChannelId[]) : undefined;
+      const r = await loadAnalytics(ctx.sb, ctx.ws, { days: int(a.dias, 90, 1, 365), kinds, accountId: contaId, limit: int(a.limite, 10, 1, 50), sortBy: oneOf(a.ordenar_por, ["engajamento", "alcance", "visualizacoes", "impressoes", "curtidas", "comentarios", "salvamentos", "compartilhamentos", "cliques"], "ordenar_por", true) as never, labels: CHANNEL_LABELS });
+      const { melhor_horario, ...rest } = r;
+      if (!r.publicacoes) return { ...rest, melhor_horario: melhor_horario.melhores, aviso: "Nenhuma publicação com estatísticas no período. Confira as contas (listar_contas_conectadas) ou use atualizar=true.", atualizadas };
+      return { ...rest, melhor_horario: { melhores: melhor_horario.melhores, como_ler: melhor_horario.como_ler }, seguidores: { ...r.seguidores, contas: r.seguidores.contas.map(({ serie: _s, ...c }) => c), serie_total: undefined }, atualizadas };
+    },
+  },
+  {
+    name: "melhor_horario", title: "Melhor dia e horário para publicar", write: false,
+    description: "Mapa dia da semana × hora (Brasília) com o desempenho médio das publicações, em relação à média da própria conta (1 = média; 1,5 = 50% acima), e os 3 melhores horários. Filtre por rede para recomendar horários específicos (ex.: LinkedIn de manhã, Instagram à noite).",
+    input: { type: "object", properties: { dias: { type: "integer", minimum: 7, maximum: 365, default: 90 }, redes: { type: "array", items: { type: "string" } }, conta_id: { type: "string", format: "uuid" } }, additionalProperties: false },
+    run: async (ctx, a) => {
+      const r = await loadAnalytics(ctx.sb, ctx.ws, { days: int(a.dias, 90, 7, 365), kinds: (Array.isArray(a.redes) ? a.redes.map((x) => str(x, 30)) : []).filter((k) => k in CHANNEL_LABELS), accountId: a.conta_id ? needUuid(a.conta_id, "conta_id") : undefined, labels: CHANNEL_LABELS });
+      return { publicacoes_analisadas: r.publicacoes, melhores: r.melhor_horario.melhores, por_dia_da_semana: r.por_dia_da_semana.filter((d) => d.publicacoes), por_horario: r.por_horario.filter((h) => h.publicacoes), mapa: r.melhor_horario.mapa, como_ler: r.melhor_horario.como_ler, ...(r.publicacoes < 10 ? { aviso: "Poucas publicações no período: trate como indicação, não como regra." } : {}) };
+    },
+  },
+  {
+    name: "crescimento_seguidores", title: "Crescimento de seguidores", write: false,
+    description: "Seguidores de cada conta (hoje e no início do período), ganho no período e a série diária. O histórico começa a contar a partir da conexão da conta no NinePro (uma foto por dia).",
+    input: { type: "object", properties: { dias: { type: "integer", minimum: 1, maximum: 365, default: 30 }, redes: { type: "array", items: { type: "string" } }, conta_id: { type: "string", format: "uuid" } }, additionalProperties: false },
+    run: async (ctx, a) => {
+      const r = await loadAnalytics(ctx.sb, ctx.ws, { days: int(a.dias, 30, 1, 365), kinds: (Array.isArray(a.redes) ? a.redes.map((x) => str(x, 30)) : []).filter((k) => k in CHANNEL_LABELS), accountId: a.conta_id ? needUuid(a.conta_id, "conta_id") : undefined, labels: CHANNEL_LABELS });
+      return { ...r.seguidores, ...(r.seguidores.contas.length ? {} : { aviso: "Ainda sem histórico de seguidores. Ele é gravado uma vez por dia depois que a conta é conectada." }) };
     },
   },
   {
@@ -890,6 +881,7 @@ const DOCS: { titulo: string; texto: string }[] = [
   { titulo: "Validação", texto: "validar_publicacao confere texto, título e mídias contra cada rede. validar_midia abre a mídia e confere formato pelos bytes, tamanho, dimensões, proporção e duração por rede. contar_caracteres conta por rede, com a contagem ponderada do X (link = 23, emoji = 2)." },
   { titulo: "Sequências de mensagens", texto: "criar_sequencia monta passos com intervalo (esperar_minutos; 1440 = 1 dia), cada um com texto (só dentro de 24 h após a última mensagem do contato) ou modelo aprovado do WhatsApp. ativar_sequencia começa a enviar. inscrever_na_sequencia inscreve conversas ou números. Com sai_ao_responder, o contato sai quando responde. listar_inscricoes mostra o andamento." },
   { titulo: "Redes e limites", texto: "Instagram (2.200 caracteres, exige foto ou vídeo), Facebook (texto, até 10 fotos ou 1 vídeo), Threads (500, até 20 mídias), LinkedIn (3.000, fotos, 1 vídeo, PDF ou enquete), YouTube (1 vídeo, título até 100), TikTok (vídeo ou fotos, 2.200), X (280, até 4 fotos ou 1 vídeo, enquete, thread), Pinterest (descrição 800, título 100, 1 a 5 fotos ou 1 vídeo, numa pasta), Google Meu Negócio (1.500, 1 foto, novidade/evento/oferta com botão), Telegram (4.096, até 10 mídias), Discord (2.000, enquete), Slack (mensagens e arquivos em canais), Bluesky (300, até 4 fotos de 1 MB ou 1 vídeo, thread). Conecte em Conexões › Redes para publicar." },
+  { titulo: "Análises das publicações", texto: "analisar_publicacoes compara todas as redes (Instagram, Facebook, Threads, LinkedIn de empresa, YouTube, TikTok, X, Pinterest, Bluesky), inclusive posts feitos fora do NinePro: totais, taxa de engajamento, por rede, por formato, melhores e piores. melhor_horario usa o desempenho relativo (1 = média da própria conta) por dia e hora de Brasília. crescimento_seguidores mostra o ganho de seguidores por conta (uma foto por dia desde a conexão). Os números são atualizados a cada 12 horas; atualizar=true busca na hora." },
   { titulo: "Opções por rede", texto: "publicar aceita 'opcoes' por rede: primeiro_comentario (Instagram, Facebook, LinkedIn, YouTube, Threads, Slack), thread (X, Threads, Bluesky), enquete (X, LinkedIn, Discord), colaboradores e marcar (Instagram), documento_url (PDF no LinkedIn), visibilidade/playlist_id/categoria/tags (YouTube), privacidade/sem_dueto/sem_stitch/conteudo_de_marca (TikTok), pasta/link (Pinterest), tipo/botao/evento/cupom (Google Meu Negócio), formatacao/silencioso (Telegram). A lista completa, com limites, vem de opcoes_de_publicacao." },
   { titulo: "Aprovação", texto: "O espaço pode exigir aprovação para publicações de agentes de IA, de membros ou de todos (Publicações › Aprovação). Nesses casos publicar devolve status aguardando_aprovacao e nada sai até uma pessoa administradora aprovar no app. Agentes não aprovam publicações. exige_aprovacao=true manda para aprovação mesmo sem a regra." },
   { titulo: "Reciclagem e horário por rede", texto: "reciclar { a_cada_dias, vezes, variacoes } agenda a mesma publicação de novo depois de publicada (YouTube e TikTok ficam fora). horarios_por_rede publica cada rede no seu horário; a publicação fica agendada até a última rede sair." },

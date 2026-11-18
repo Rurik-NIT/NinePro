@@ -69,6 +69,10 @@ export interface PublishInput { text: string; title?: string; media: PublishMedi
 export interface PublishResult { id: string; permalink: string | null; aviso?: string }
 /** Conta em que se publica (linha de channel_accounts). */
 export interface PublishAccount { externalId: string; name: string; detail: Record<string, unknown> }
+/** Uma publicação com métricas, no formato comum a todas as redes. null = a rede não informa. */
+export interface PostStat { id: string; text?: string | null; permalink?: string | null; thumbnail?: string | null; type?: string | null; postedAt?: string | null; likes?: number | null; comments?: number | null; shares?: number | null; saves?: number | null; views?: number | null; impressions?: number | null; reach?: number | null; clicks?: number | null }
+/** Números da conta num dia. */
+export interface AccountStat { followers?: number | null; following?: number | null; posts?: number | null; impressions?: number | null; reach?: number | null; profileViews?: number | null; extra?: Record<string, number | string | null> }
 /** Limites de cada rede, usados para validar antes de publicar. */
 export interface SocialLimits { text: number; images: number; videos: number; textOnly: boolean; mixed: boolean; needsMedia?: "video" | "any"; needsTitle?: boolean; titleMax?: number }
 
@@ -80,6 +84,10 @@ export interface ChannelProvider extends Connector {
   subscribe(env: Env, auth: StoredAuth, accounts: NChannelAccount[]): Promise<string | null>;
   /** Redes de publicação: publica na conta e devolve o ID e o link. */
   publish?(env: Env, auth: StoredAuth, account: PublishAccount, p: PublishInput): Promise<PublishResult>;
+  /** Análises: publicações recentes da conta com métricas (de todas as origens). */
+  stats?(env: Env, auth: StoredAuth, account: PublishAccount, limit: number): Promise<PostStat[]>;
+  /** Análises: números da conta hoje (seguidores, alcance…). */
+  accountStats?(env: Env, auth: StoredAuth, account: PublishAccount): Promise<AccountStat>;
   /** Comenta na publicação recém-criada (primeiro comentário). */
   comment?(env: Env, auth: StoredAuth, account: PublishAccount, postId: string, text: string): Promise<{ id: string }>;
   limits?: SocialLimits;

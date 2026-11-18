@@ -4,9 +4,9 @@
  * Publica texto, foto, várias fotos ou vídeo na Página. O token da Página é obtido na hora (não é guardado).
  */
 import { metaVersion } from "./meta.js";
-import { http, PlatformError, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
+import { http, PlatformError, type ChannelProvider, type Env, type ExchangeResult, type PostStat, type StoredAuth } from "./types.js";
 
-export const FB_DEFAULT_SCOPES = "pages_show_list,pages_read_engagement,pages_manage_posts,business_management";
+export const FB_DEFAULT_SCOPES = "pages_show_list,pages_read_engagement,pages_manage_posts,read_insights,business_management";
 const graph = (env: Env) => `https://graph.facebook.com/${metaVersion(env)}`;
 const expired = (_s: number, b: Record<string, unknown>) => { const c = (b.error as { code?: number } | undefined)?.code; return c === 190 || c === 102; };
 const call = <T = Record<string, unknown>>(url: string, init?: RequestInit) => http<T>("Facebook", url, init, expired);
@@ -68,6 +68,25 @@ export const facebookProvider: ChannelProvider = {
     return pages.map((p) => ({ externalId: p.id, name: p.name, displayName: p.category ?? null, picture: p.picture?.data?.url ?? null, status: "ativo", detail: { seguidores: p.fan_count ?? null, link: p.link ?? null } }));
   },
   async subscribe() { return null; },
+  async stats(env, auth, account, limit) {
+    const token = await pageToken(env, auth, account.externalId);
+    type P = { id: string; message?: string; created_time?: string; permalink_url?: string; full_picture?: string; status_type?: string; shares?: { count?: number }; reactions?: { summary?: { total_count?: number } }; comments?: { summary?: { total_count?: number } } };
+    const r = await call<{ data?: P[] }>(`${graph(env)}/${account.externalId}/posts?${new URLSearchParams({ fields: "id,message,created_time,permalink_url,full_picture,status_type,shares,reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0)", limit: String(Math.min(limit, 50)), access_token: token })}`);
+    const out: PostStat[] = [];
+    for (const p of r.data ?? []) {
+      const ins = await call<{ data: { name: string; values?: { value: number }[] }[] }>(`${graph(env)}/${p.id}/insights?${new URLSearchParams({ metric: "post_impressions,post_impressions_unique,post_clicks", access_token: token })}`).catch(() => ({ data: [] }));
+      const v = (k: string) => ins.data.find((x) => x.name === k)?.values?.[0]?.value ?? null;
+      out.push({ id: p.id, text: p.message ?? null, permalink: p.permalink_url ?? null, thumbnail: p.full_picture ?? null, type: p.status_type ?? null, postedAt: p.created_time ?? null, likes: p.reactions?.summary?.total_count ?? 0, comments: p.comments?.summary?.total_count ?? 0, shares: p.shares?.count ?? 0, impressions: v("post_impressions"), reach: v("post_impressions_unique"), clicks: v("post_clicks") });
+    }
+    return out;
+  },
+  async accountStats(env, auth, account) {
+    const token = await pageToken(env, auth, account.externalId);
+    const p = await call<{ fan_count?: number; followers_count?: number }>(`${graph(env)}/${account.externalId}?${new URLSearchParams({ fields: "fan_count,followers_count", access_token: token })}`);
+    const ins = await call<{ data: { name: string; values?: { value: number }[] }[] }>(`${graph(env)}/${account.externalId}/insights?${new URLSearchParams({ metric: "page_impressions,page_impressions_unique,page_views_total", period: "day", access_token: token })}`).catch(() => ({ data: [] }));
+    const v = (k: string) => ins.data.find((x) => x.name === k)?.values?.at(-1)?.value ?? null;
+    return { followers: p.followers_count ?? p.fan_count ?? null, impressions: v("page_impressions"), reach: v("page_impressions_unique"), profileViews: v("page_views_total"), extra: { curtidas_da_pagina: p.fan_count ?? null } };
+  },
   async publish(env, auth, account, p) {
     const page = account.externalId;
     const token = await pageToken(env, auth, page);

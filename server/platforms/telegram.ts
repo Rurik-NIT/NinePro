@@ -81,6 +81,9 @@ export const telegramProvider: ChannelProvider = {
     return out;
   },
   async subscribe() { return null; },
+  async accountStats(_env, auth, account) {
+    return { followers: await tg<number>(tokenOf(auth), "getChatMemberCount", { chat_id: account.externalId }) };
+  },
   async publish(_env, auth, account, p) {
     const token = tokenOf(auth);
     const chat = account.externalId;

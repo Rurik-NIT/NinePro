@@ -3,7 +3,7 @@
  * App do NinePro: INSTAGRAM_APP_ID, INSTAGRAM_APP_SECRET (produto Instagram dentro do app da Meta).
  * Opcionais: INSTAGRAM_GRAPH_VERSION (v23.0), INSTAGRAM_SCOPES.
  */
-import { http, PlatformError, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
+import { http, PlatformError, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth, type PublishAccount, type PostStat, type AccountStat } from "./types.js";
 
 const ver = (env: Env) => env.INSTAGRAM_GRAPH_VERSION || "v23.0";
 const ig = (env: Env) => `https://graph.instagram.com/${ver(env)}`;
@@ -35,6 +35,8 @@ async function result(env: Env, token: string, expiresIn: number | undefined, ex
 }
 
 export const instagramProvider: ChannelProvider = {
+  stats: igStats,
+  accountStats: igAccountStats,
   id: "instagram",
   label: "Instagram",
   limits: { text: 2200, images: 10, videos: 10, textOnly: false, mixed: true, needsMedia: "any" },
@@ -191,6 +193,24 @@ export async function igPublish(env: Env, token: string, igId: string, p: { type
   return { id: pub.id, permalink: (info as IgMedia).permalink ?? null };
 }
 
+/** Análises: publicações recentes com curtidas, comentários e insights. */
+async function igStats(env: Env, auth: StoredAuth, _account: PublishAccount, limit: number): Promise<PostStat[]> {
+  const token = auth.accessToken ?? "";
+  const out: PostStat[] = [];
+  for (const m of await igRecentMedia(env, token, limit)) {
+    const ins = await igMediaInsights(env, token, m.id, m.media_type);
+    out.push({ id: m.id, text: m.caption ?? null, permalink: m.permalink ?? null, thumbnail: m.thumbnail_url ?? m.media_url ?? null, type: m.media_type ?? null, postedAt: m.timestamp ?? null, likes: m.like_count ?? 0, comments: m.comments_count ?? 0, reach: ins.reach ?? null, views: ins.views ?? null, saves: ins.saved ?? null, shares: ins.shares ?? null });
+  }
+  return out;
+}
+/** Análises: seguidores e, se o app tiver permissão, alcance e visitas ao perfil do dia. */
+async function igAccountStats(env: Env, auth: StoredAuth, account: PublishAccount): Promise<AccountStat> {
+  const token = auth.accessToken ?? "";
+  const me = await call<Me>(`${ig(env)}/me?${new URLSearchParams({ fields: "followers_count,follows_count,media_count" })}`, { headers: bearer(token) });
+  const ins = await call<{ data: { name: string; total_value?: { value: number } }[] }>(`${ig(env)}/${account.externalId}/insights?${new URLSearchParams({ metric: "reach,profile_views", period: "day", metric_type: "total_value" })}`, { headers: bearer(token) }).catch(() => ({ data: [] }));
+  const v = (k: string) => ins.data.find((x) => x.name === k)?.total_value?.value ?? null;
+  return { followers: me.followers_count ?? null, following: me.follows_count ?? null, posts: me.media_count ?? null, reach: v("reach"), profileViews: v("profile_views") };
+}
 /** Métricas de uma publicação (alcance, visualizações, salvos, compartilhamentos). Falha silenciosa: devolve vazio. */
 export async function igMediaInsights(env: Env, token: string, mediaId: string, mediaType?: string): Promise<{ reach?: number; views?: number; saved?: number; shares?: number }> {
   const metrics = mediaType === "CAROUSEL_ALBUM" ? "reach,saved,views" : "reach,saved,shares,views";

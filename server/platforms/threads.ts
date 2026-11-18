@@ -3,7 +3,7 @@
  * (caso de uso "Acessar a API do Threads" no app da Meta). Opcionais: THREADS_GRAPH_VERSION (v1.0), THREADS_SCOPES.
  * Publica texto (até 500), imagem, vídeo ou carrossel (2 a 20).
  */
-import { http, optList, optStr, PlatformError, sleep, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
+import { http, optList, optStr, PlatformError, sleep, type PostStat, type ChannelProvider, type Env, type ExchangeResult, type StoredAuth } from "./types.js";
 
 const ver = (env: Env) => env.THREADS_GRAPH_VERSION || "v1.0";
 const th = (env: Env) => `https://graph.threads.net/${ver(env)}`;
@@ -60,6 +60,24 @@ export const threadsProvider: ChannelProvider = {
     return [{ externalId: m.id, name: `@${m.username}`, displayName: m.name ?? null, picture: m.threads_profile_picture_url ?? null, status: "ativo", detail: { usuario: m.username } }];
   },
   async subscribe() { return null; },
+  async stats(env, auth, account, limit) {
+    const t = tok(auth);
+    type P = { id: string; text?: string; permalink?: string; timestamp?: string; media_type?: string; media_url?: string; thumbnail_url?: string };
+    const r = await call<{ data?: P[] }>(`${th(env)}/${account.externalId}/threads?${new URLSearchParams({ fields: "id,text,permalink,timestamp,media_type,media_url,thumbnail_url", limit: String(Math.min(limit, 50)), access_token: t })}`);
+    const out: PostStat[] = [];
+    for (const p of r.data ?? []) {
+      if (p.media_type === "REPOST_FACADE") continue;
+      const ins = await call<{ data: { name: string; values?: { value: number }[]; total_value?: { value: number } }[] }>(`${th(env)}/${p.id}/insights?${new URLSearchParams({ metric: "views,likes,replies,reposts,quotes,shares", access_token: t })}`).catch(() => ({ data: [] }));
+      const v = (k: string) => { const m = ins.data.find((x) => x.name === k); return m ? (m.total_value?.value ?? m.values?.[0]?.value ?? 0) : null; };
+      out.push({ id: p.id, text: p.text ?? null, permalink: p.permalink ?? null, thumbnail: p.thumbnail_url ?? p.media_url ?? null, type: p.media_type ?? null, postedAt: p.timestamp ?? null, likes: v("likes") ?? 0, comments: v("replies") ?? 0, shares: (v("reposts") ?? 0) + (v("quotes") ?? 0) + (v("shares") ?? 0), views: v("views") });
+    }
+    return out;
+  },
+  async accountStats(env, auth, account) {
+    const r = await call<{ data: { name: string; values?: { value: number }[]; total_value?: { value: number } }[] }>(`${th(env)}/${account.externalId}/threads_insights?${new URLSearchParams({ metric: "followers_count,views", access_token: tok(auth) })}`);
+    const f = r.data.find((x) => x.name === "followers_count"), vw = r.data.find((x) => x.name === "views");
+    return { followers: f?.total_value?.value ?? null, impressions: vw ? (vw.total_value?.value ?? vw.values?.at(-1)?.value ?? null) : null };
+  },
   async publish(env, auth, account, p) {
     const t = tok(auth); const uid = account.externalId;
     const create = async (o: Record<string, string>) => (await call<{ id: string }>(`${th(env)}/${uid}/threads`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ ...o, access_token: t }) })).id;

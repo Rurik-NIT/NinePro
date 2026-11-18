@@ -7,7 +7,7 @@
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { decryptToken, encryptToken, signState, verifyState } from "./crypto.js";
-import { CONNECTORS, isChannel, isConnector, isPlatform, PlatformError, PROVIDERS, type AppCreds, type AuthMode, type ConnectorId, type ExchangeResult, type NAccount, type PlatformId, type StoredAuth } from "./platforms/index.js";
+import { CHANNELS, CONNECTORS, isChannel, isConnector, isPlatform, PlatformError, PROVIDERS, type AppCreds, type AuthMode, type ConnectorId, type ExchangeResult, type NAccount, type PlatformId, type StoredAuth } from "./platforms/index.js";
 import { syncChannel } from "./channels.js";
 
 type Env = Record<string, string | undefined>;
@@ -318,8 +318,8 @@ export async function handleSync(req: Request, env: Env): Promise<Response> {
   const { data: conns } = await sb.from("platform_connections").select("id, workspace_id, platform").eq("status", "ativa");
   const results = [];
   for (const c of conns ?? []) if (isPlatform(c.platform)) results.push({ espaco: c.workspace_id, plataforma: c.platform, ...(await syncConnection(sb, env, c as ConnRow, "agendada", 3)) });
-  // Canais: atualiza números, modelos e estatísticas do Instagram a cada 12 horas
-  const { data: chans } = await sb.from("platform_connections").select("id, workspace_id, platform, last_synced_at").eq("status", "ativa").in("platform", ["whatsapp", "instagram"]);
+  // Canais e redes: atualiza contas, modelos e análises a cada 12 horas
+  const { data: chans } = await sb.from("platform_connections").select("id, workspace_id, platform, last_synced_at").eq("status", "ativa").in("platform", Object.keys(CHANNELS));
   for (const c of chans ?? []) {
     if (c.last_synced_at && Date.now() - Date.parse(c.last_synced_at as string) < 12 * 3_600_000) continue;
     if (isChannel(c.platform)) results.push({ espaco: c.workspace_id, plataforma: c.platform, ...(await syncChannel(sb, env, { id: c.id as string, workspace_id: c.workspace_id as string, platform: c.platform }, "agendada")) });

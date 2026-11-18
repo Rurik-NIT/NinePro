@@ -63,6 +63,10 @@ export const slackProvider: ChannelProvider = {
     return out.slice(0, 300);
   },
   async subscribe() { return null; },
+  async accountStats(_env, auth, account) {
+    const r = await slack<SlackRes & { channel: { num_members?: number } }>(tok(auth), `conversations.info?channel=${account.externalId}&include_num_members=true`);
+    return { followers: r.channel.num_members ?? null };
+  },
   async publish(_env, auth, account, p) {
     const token = tok(auth); const channel = account.externalId;
     const o = p.options; const text = p.text.trim();
