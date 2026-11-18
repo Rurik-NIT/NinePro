@@ -507,14 +507,14 @@ export function checkPost(kinds: ChannelId[], d: PostDraft) {
     if (n > lim.text) (kind === "x" ? avisos : problemas).push(`${name}: o texto tem ${n} caracteres (máximo ${lim.text}${kind === "x" ? ", exceto contas Premium" : ""}).`);
     if (!media.length && !lim.textOnly) problemas.push(`${name}: precisa de ${lim.needsMedia === "video" ? "um vídeo" : "foto ou vídeo"}.`);
     if (!media.length && lim.textOnly && !text) problemas.push(`${name}: escreva um texto ou adicione mídia.`);
-    if (lim.needsMedia === "video" && !vids) problemas.push(`${name}: precisa de um vídeo.`);
+    if (lim.needsMedia === "video" && !vids && media.length) problemas.push(`${name}: precisa de um vídeo.`);
     if (imgs > lim.images) (lim.images ? avisos : problemas).push(lim.images ? `${name}: só as primeiras ${lim.images} imagens serão usadas.` : `${name}: não aceita imagens, só vídeo.`);
     if (vids > lim.videos) problemas.push(`${name}: aceita no máximo ${lim.videos} vídeo(s).`);
     if (imgs && vids && !lim.mixed) problemas.push(`${name}: não mistura fotos e vídeo na mesma publicação.`);
     if (lim.needsTitle && !(d.title?.trim() || text.split("\n")[0])) problemas.push(`${name}: informe o título.`);
     if (lim.titleMax && d.title && graphemes(d.title) > lim.titleMax) problemas.push(`${name}: título com mais de ${lim.titleMax} caracteres.`);
   }
-  return { ok: !problemas.length, problemas, avisos };
+  return { ok: !problemas.length, problemas: [...new Set(problemas)], avisos: [...new Set(avisos)] };
 }
 
 type PostResult = Record<string, { id?: string; permalink?: string | null; erro?: string; aviso?: string; conta: string; rede?: string }>;

@@ -34,11 +34,11 @@ export function checkDraft(kinds: ChannelKind[], d: { text: string; title?: stri
     if (n > l.text && k !== "x") problemas.push(`${name}: ${n}/${l.text} caracteres.`);
     if (!d.media.length && !l.textOnly) problemas.push(`${name}: precisa de ${l.needsVideo ? "um vídeo" : "foto ou vídeo"}.`);
     if (!d.media.length && !text) problemas.push(`${name}: escreva um texto ou adicione mídia.`);
-    if (l.needsVideo && !vids) problemas.push(`${name}: precisa de um vídeo.`);
+    if (l.needsVideo && !vids && d.media.length) problemas.push(`${name}: precisa de um vídeo.`);
     if (!l.images && imgs) problemas.push(`${name}: não aceita imagens.`);
     if (vids > l.videos) problemas.push(`${name}: no máximo ${l.videos} vídeo(s).`);
     if (imgs && vids && !l.mixed) problemas.push(`${name}: não mistura fotos e vídeo.`);
     if (l.needsTitle && !(d.title?.trim() || text)) problemas.push(`${name}: informe o título.`);
   }
-  return problemas;
+  return [...new Set(problemas)];
 }
