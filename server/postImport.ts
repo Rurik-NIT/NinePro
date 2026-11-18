@@ -48,14 +48,15 @@ export function parseCsv(text: string): string[][] {
   return rows.filter((r) => r.some((x) => x.trim()));
 }
 
+const realDay = (y: number, m: number, d: number, hh: number, mm: number) => { const t = new Date(Date.UTC(y, m - 1, d)); return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d && hh < 24 && mm < 60; };
 function parseWhen(raw: string): Date | "fila" | null | "invalida" {
   const s = raw.trim();
   if (!s) return null;
   if (/^fila$/i.test(s)) return "fila";
   let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})[ T]+(\d{1,2}):(\d{2})$/);
-  if (m) return new Date(zonedToUtc("America/Sao_Paulo", +m[3], +m[2], +m[1], +m[4], +m[5]));
+  if (m) return realDay(+m[3], +m[2], +m[1], +m[4], +m[5]) ? new Date(zonedToUtc("America/Sao_Paulo", +m[3], +m[2], +m[1], +m[4], +m[5])) : "invalida";
   m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})(?::\d{2})?$/);
-  if (m) return new Date(zonedToUtc("America/Sao_Paulo", +m[1], +m[2], +m[3], +m[4], +m[5]));
+  if (m) return realDay(+m[1], +m[2], +m[3], +m[4], +m[5]) ? new Date(zonedToUtc("America/Sao_Paulo", +m[1], +m[2], +m[3], +m[4], +m[5])) : "invalida";
   const d = new Date(s);
   return Number.isNaN(d.getTime()) || !/[zZ]|[+-]\d{2}:?\d{2}$/.test(s) ? "invalida" : d;
 }

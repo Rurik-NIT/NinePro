@@ -617,18 +617,20 @@ export async function recyclePost(sb: SupabaseClient, post: Json) {
   const { data: accs } = await sb.from("channel_accounts").select("id, kind").in("id", (post.channel_account_ids as string[]) ?? []);
   const keep = (accs ?? []).filter((a) => !NO_RECYCLE.has(a.kind as ChannelId));
   if (!keep.length) return null;
-  const texts = [String(post.content ?? ""), ...(r.variacoes ?? [])];
+  const base = r.original ?? String(post.content ?? "");
+  const texts = [base, ...(r.variacoes ?? [])];
   const content = texts[count % texts.length];
   const { data } = await sb.from("posts").insert({
     workspace_id: post.workspace_id, content, title: post.title, custom: r.variacoes?.length ? {} : post.custom, options: post.options, channels: [...new Set(keep.map((a) => LABEL[a.kind as ChannelId] ?? a.kind))],
-    channel_account_ids: keep.map((a) => a.id), media_urls: post.media_urls, media_type: post.media_type, status: "agendada", scheduled_at: at.toISOString(), recycling: r,
+    channel_account_ids: keep.map((a) => a.id), media_urls: post.media_urls, media_type: post.media_type, status: "agendada", scheduled_at: at.toISOString(), recycling: { ...r, original: base },
     recycled_from: (post.recycled_from as string | null) ?? post.id, recycle_count: count, source: post.source ?? "app", created_by: post.created_by, result: {}, attempts: 0,
   }).select("id").single();
   if (data) await dispatchEvent(sb, post.workspace_id as string, "publicacao.reciclada" as WebhookEvent, { publicacao_id: data.id, original_id: (post.recycled_from as string | null) ?? post.id, vez: count, agendada_para: at.toISOString() });
   return data ? { id: data.id as string, agendada_para: at.toISOString(), vez: count } : null;
 }
 
-export interface Recycling { a_cada_dias: number; vezes?: number; ate?: string; variacoes?: string[] }
+/** original: texto da primeira publicação (guardado nas cópias para alternar com as variações). */
+export interface Recycling { a_cada_dias: number; vezes?: number; ate?: string; variacoes?: string[]; original?: string }
 function cleanRecycling(v: unknown): Recycling | null {
   if (!v || typeof v !== "object") return null;
   const o = v as Json;

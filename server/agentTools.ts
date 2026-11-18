@@ -932,7 +932,7 @@ TOOLS.push(
     input: { type: "object", properties: { consulta: { type: "string" }, query: { type: "string" } }, additionalProperties: false },
     run: async (_ctx, a) => {
       const query = str(a.consulta ?? a.query, 200);
-      const docs = DOCS.map((d) => ({ d, s: score(query, `${d.titulo} ${d.texto}`) })).sort((x, y) => y.s - x.s).slice(0, 5);
+      const docs = DOCS.map((d) => ({ d, s: score(query, d.titulo) * 3 + score(query, d.texto) })).sort((x, y) => y.s - x.s).slice(0, 5);
       return { trechos: docs.map(({ d }) => d) };
     },
   },
@@ -955,8 +955,7 @@ async function publishFor(ctx: ToolCtx, a: Json, kinds: ChannelId[]) {
   }
   const unknown = contas.filter((c) => !all.some((x) => x.id === c));
   if (unknown.length) throw new ToolError(400, `Conta(s) não encontrada(s) ou desconectada(s): ${unknown.join(", ")}. Use listar_contas_conectadas.`);
-  const ownTimes = a.horarios_por_rede && typeof a.horarios_por_rede === "object" && Object.keys(a.horarios_por_rede).length > 0;
-  return channel(() => savePost(chCtx(ctx), { content: str(a.legenda, 63206), custom: a.textos_por_rede ?? {}, title: str(a.titulo, 200) || undefined, accountIds: contas, mediaUrls: a.midias, mediaType: a.tipo, scheduledAt: a.agendar_para, queueId: a.fila_id ? needUuid(a.fila_id, "fila_id") : undefined, mode: a.rascunho === true ? "rascunho" : useQueue ? "fila" : a.agendar_para || ownTimes ? "agendar" : "agora", options: a.opcoes, times: a.horarios_por_rede, recycling: a.reciclar, requiresApproval: a.exige_aprovacao === true }));
+  return channel(() => savePost(chCtx(ctx), { content: str(a.legenda, 63206), custom: a.textos_por_rede ?? {}, title: str(a.titulo, 200) || undefined, accountIds: contas, mediaUrls: a.midias, mediaType: a.tipo, scheduledAt: a.agendar_para, queueId: a.fila_id ? needUuid(a.fila_id, "fila_id") : undefined, mode: a.rascunho === true ? "rascunho" : useQueue ? "fila" : a.agendar_para ? "agendar" : "agora", options: a.opcoes, times: a.horarios_por_rede, recycling: a.reciclar, requiresApproval: a.exige_aprovacao === true }));
 }
 /** Contexto de publicação de um agente: conta como "agente" (OAuth) ou "api" (chave) para a regra de aprovação. */
 const chCtx = (ctx: ToolCtx): ChannelCtx => ({ sb: ctx.sb, env: ctx.env, ws: ctx.ws, userId: ctx.userId ?? null, source: ctx.userId ? "agente" : "api" });

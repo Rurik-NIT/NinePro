@@ -25,8 +25,8 @@ function ListField({ f, value, onChange }: { f: OptField; value: string[]; onCha
     <div className="flex flex-col gap-1.5">
       {items.map((v, i) => (
         <div key={i} className="flex items-start gap-1.5">
-          {long ? <Textarea value={v} rows={2} maxLength={f.max} aria-label={`${f.label} ${i + 1}`} onChange={(e) => onChange(items.map((x, j) => (j === i ? e.target.value : x)))} />
-            : <Input value={v} maxLength={f.max} aria-label={`${f.label} ${i + 1}`} onChange={(e) => onChange(items.map((x, j) => (j === i ? e.target.value : x)))} />}
+          <div className="min-w-0 flex-1">{long ? <Textarea value={v} rows={2} maxLength={f.max} aria-label={`${f.label} ${i + 1}`} onChange={(e) => onChange(items.map((x, j) => (j === i ? e.target.value : x)))} />
+            : <Input value={v} maxLength={f.max} aria-label={`${f.label} ${i + 1}`} onChange={(e) => onChange(items.map((x, j) => (j === i ? e.target.value : x)))} />}</div>
           {items.length > 1 && <IconButton size="sm" label="Remover" onClick={() => onChange(items.filter((_, j) => j !== i))}><X /></IconButton>}
         </div>
       ))}

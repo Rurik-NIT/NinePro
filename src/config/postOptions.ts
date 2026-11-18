@@ -108,6 +108,7 @@ export const POST_OPTIONS: Record<OptKind, OptField[]> = {
     { key: "termos", label: "Termos e condições", type: "textarea", max: 1500, when: { key: "tipo", is: ["OFFER"] } },
   ],
   slack: [
+    { ...firstComment, hint: "Enviado como resposta na conversa da mensagem (só em mensagens de texto)." },
     { key: "sem_previa_de_link", label: "Não mostrar a prévia do link", type: "bool" },
     { key: "responder_em", label: "Responder na conversa (ts da mensagem)", type: "text", max: 32 },
   ],

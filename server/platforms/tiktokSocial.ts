@@ -97,7 +97,7 @@ export const tiktokSocialProvider: ChannelProvider = {
       if (s.data.status === "PUBLISH_COMPLETE") {
         const id = s.data.publicaly_available_post_id?.[0];
         const user = String(account.detail.usuario ?? "");
-        return { id: id ? String(id) : publishId, permalink: id && user ? `https://www.tiktok.com/@${user}/${video ? "video" : "photo"}/${id}` : null, aviso: privacy !== wanted ? (privacy === "SELF_ONLY" && !opts.includes(wanted) ? "Publicado como privado: o app do TikTok ainda não foi auditado." : `A conta não permite "${wanted}"; publicado como ${privacy}.`) : undefined };
+        return { id: id ? String(id) : publishId, permalink: id && user ? `https://www.tiktok.com/@${user}/${video ? "video" : "photo"}/${id}` : null, aviso: privacy !== wanted ? (privacy === "SELF_ONLY" && !opts.includes("PUBLIC_TO_EVERYONE") ? "Publicado como privado: o app do TikTok ainda não foi auditado." : `A conta não permite "${wanted}"; publicado como ${privacy}.`) : undefined };
       }
       if (s.data.status === "FAILED") throw new PlatformError(`TikTok recusou: ${s.data.fail_reason ?? "motivo não informado"}.`);
       await sleep(3000);
