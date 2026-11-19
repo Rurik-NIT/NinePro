@@ -4,6 +4,7 @@
  *  - team_list / team_invite / team_role / team_remove: equipe do espaço (administradores do cliente)
  *  - rule_preview / rule_run: testar uma regra automática nas campanhas reais (simulação ou execução agora)
  */
+import { DestinationError, saveDestination } from "./destinations.js";
 import { createClient, type SupabaseClient, type User } from "@supabase/supabase-js";
 import { randomBytes } from "node:crypto";
 import { runRule } from "./rules.js";
@@ -76,6 +77,22 @@ export async function handleApp(req: Request, env: Env): Promise<Response> {
   const isAdmin = role === "owner" || role === "admin";
 
   switch (body.action) {
+    /* ---------------------------------------------------------------- destinos de conversão (Meta, TikTok) */
+    case "dest_save": {
+      if (!isAdmin) return json(403, { error: "Só administradores do espaço podem configurar destinos." });
+      try { return json(200, await saveDestination(sb, env, ws, who.user.id, { platform: str(body.platform, 20), pixelId: body.pixelId === undefined ? undefined : str(body.pixelId, 64), token: body.token ? str(body.token, 2000) : undefined, testCode: body.testCode === undefined ? undefined : str(body.testCode, 40), enabled: body.enabled === undefined ? undefined : body.enabled === true })); }
+      catch (e) { if (e instanceof DestinationError) return json(400, { error: e.message }); throw e; }
+    }
+    case "dest_toggle": {
+      if (!isAdmin) return json(403, { error: "Só administradores do espaço podem configurar destinos." });
+      await sb.from("conversion_destinations").update({ enabled: body.enabled === true, updated_at: new Date().toISOString() }).eq("workspace_id", ws).eq("platform", str(body.platform, 20));
+      return json(200, { ok: true });
+    }
+    case "dest_delete": {
+      if (!isAdmin) return json(403, { error: "Só administradores do espaço podem configurar destinos." });
+      await sb.from("conversion_destinations").delete().eq("workspace_id", ws).eq("platform", str(body.platform, 20));
+      return json(200, { ok: true });
+    }
     /* ---------------------------------------------------------------- agentes conectados por OAuth */
     case "oauth_revoke": {
       const id = str(body.tokenId, 64);

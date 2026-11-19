@@ -3,7 +3,8 @@ import { useState } from "react";
 import { ConnectionsOnboarding, resetOnboarding } from "./connections/Onboarding";
 import { PLATFORMS, PLATFORM_ORDER, type PlatformId } from "@/data/demo";
 import { Page, PageHeader, Section } from "@/components/layout/AppShell";
-import { Button } from "@/components/ui/Button";
+import { Button, buttonClasses } from "@/components/ui/Button";
+import { Link } from "react-router-dom";
 import { Tag } from "@/components/ui/Badge";
 import { Tooltip } from "@/components/ui/Menu";
 import { InlineNotice } from "@/components/feedback/States";
@@ -80,14 +81,14 @@ function ConnectionsList({ onRedo }: { onRedo?: () => void }) {
       <Section title="Fontes de conversão" description="Para atribuir vendas e leads às campanhas.">
         <div className="panel divide-y divide-line-soft">
           {[
-            { icon: <ShoppingCart />, name: "Loja virtual", desc: "Pedidos e receita por campanha" },
-            { icon: <Webhook />, name: "API de eventos", desc: "Envio de conversões do seu backend" },
-            { icon: <Check />, name: "Tag do site", desc: "Visitas e eventos no navegador" },
+            { icon: <Check />, name: "Tag do site", desc: "Visitas, UTMs e conversões no navegador, com envio para Meta e TikTok", to: "/anuncios/conversoes/fontes" },
+            { icon: <Webhook />, name: "API de eventos", desc: "Conversões do seu sistema, loja ou agente de IA (POST /api/v1/conversoes)", to: "/integracao" },
+            { icon: <ShoppingCart />, name: "Loja virtual", desc: "Pedidos e receita por campanha (Shopify, WooCommerce)", to: null },
           ].map((s) => (
             <div key={s.name} className="flex items-center gap-3 px-4 py-3.5">
               <span className="grid size-8 place-items-center rounded-md bg-surface-2 text-text-muted [&_svg]:size-4">{s.icon}</span>
               <div className="flex flex-1 flex-col"><span className="text-body font-semibold">{s.name}</span><span className="t-caption">{s.desc}</span></div>
-              <Tag>Em breve</Tag>
+              {s.to ? <Link to={s.to} className={buttonClasses("outline", "sm")}>Configurar</Link> : <Tag>Em breve</Tag>}
             </div>
           ))}
         </div>

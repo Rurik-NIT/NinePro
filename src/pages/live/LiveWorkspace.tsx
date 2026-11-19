@@ -131,10 +131,13 @@ export const tagSnippet = (key: string, origin = window.location.origin) =>
 <script>
 !function(w,d,k,u){var s=w.localStorage,q=new URLSearchParams(location.search),t={};
 ["source","medium","campaign","content","term","id"].forEach(function(n){var v=q.get("utm_"+n);if(v)t[n]=v});
+var c={};["fbclid","ttclid","gclid"].forEach(function(n){var v=q.get(n);if(v)c[n]=v});
 try{if(Object.keys(t).length)s.setItem("np_utm",JSON.stringify(t));t=JSON.parse(s.getItem("np_utm")||"{}");
+if(Object.keys(c).length)s.setItem("np_ids",JSON.stringify(c));c=JSON.parse(s.getItem("np_ids")||"{}");
 var v=s.getItem("np_vid")||(Date.now().toString(36)+Math.random().toString(36).slice(2));s.setItem("np_vid",v)}catch(e){}
+d.cookie.split("; ").forEach(function(x){var p=x.split("=");if(p[0]=="_fbp"||p[0]=="_fbc")c[p[0].slice(1)]=p[1]});
 w.ninepro=function(e,p){fetch(u,{method:"POST",keepalive:true,headers:{"content-type":"text/plain"},
-body:JSON.stringify({k:k,e:e,p:p||{},v:v,url:location.href,ref:d.referrer,utm:t})})};
+body:JSON.stringify({k:k,e:e,p:p||{},v:v,url:location.href,ref:d.referrer,utm:t,ids:c})})};
 w.ninepro("page_view")}(window,document,"${key}","${origin}/api/eventos");
 </script>`;
 

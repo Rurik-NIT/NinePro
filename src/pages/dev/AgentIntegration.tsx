@@ -142,7 +142,7 @@ export function eventoValido(corpoBruto, cabecalhoAssinatura, segredo) {
 
   return (
     <Page>
-      <PageHeader title="Integração com agentes" description="Ligue agentes de IA (Claude, ChatGPT, Grok, Cursor), automações (n8n, Make) ou o seu próprio código ao NinePro. O agente lê desempenho e análises, publica no Instagram, responde conversas e cria automações de comentário → DM."
+      <PageHeader title="Integração com agentes" description="Ligue agentes de IA (Claude, ChatGPT, Grok, Cursor), automações (n8n, Make) ou o seu próprio código ao NinePro. O agente lê desempenho e análises de todas as redes, publica e agenda em 13 redes, responde conversas, registra conversões e cria automações de comentário → DM — sempre com a sua aprovação."
         actions={<Link to="/chaves-api" className={buttonClasses("primary")}><KeyRound className="size-4" />Criar chave de API</Link>} />
 
       <div className="grid grid-cols-1 gap-gutter lg:grid-cols-3">

@@ -315,12 +315,15 @@ export async function handleSync(req: Request, env: Env): Promise<Response> {
   if (!env.CRON_SECRET || req.headers.get("authorization") !== `Bearer ${env.CRON_SECRET}`) return json(401, { error: "Não autorizado." });
   const sb = serviceClient(env);
   if (!sb) return json(503, { error: "Servidor sem SUPABASE_SERVICE_ROLE_KEY configurada." });
-  const { data: conns } = await sb.from("platform_connections").select("id, workspace_id, platform").eq("status", "ativa");
+  const { data: conns } = await sb.from("platform_connections").select("id, workspace_id, platform").eq("status", "ativa").order("last_synced_at", { ascending: true, nullsFirst: true });
   const results = [];
-  for (const c of conns ?? []) if (isPlatform(c.platform)) results.push({ espaco: c.workspace_id, plataforma: c.platform, ...(await syncConnection(sb, env, c as ConnRow, "agendada", 3)) });
+  // limite de tempo por execução: com muitos clientes, o que não couber fica para a próxima hora (os mais antigos primeiro)
+  const started = Date.now(); const budget = () => Date.now() - started < 240_000;
+  for (const c of conns ?? []) if (isPlatform(c.platform) && budget()) results.push({ espaco: c.workspace_id, plataforma: c.platform, ...(await syncConnection(sb, env, c as ConnRow, "agendada", 3)) });
   // Canais e redes: atualiza contas, modelos e análises a cada 12 horas
-  const { data: chans } = await sb.from("platform_connections").select("id, workspace_id, platform, last_synced_at").eq("status", "ativa").in("platform", Object.keys(CHANNELS));
+  const { data: chans } = await sb.from("platform_connections").select("id, workspace_id, platform, last_synced_at").eq("status", "ativa").in("platform", Object.keys(CHANNELS)).order("last_synced_at", { ascending: true, nullsFirst: true });
   for (const c of chans ?? []) {
+    if (!budget()) break;
     if (c.last_synced_at && Date.now() - Date.parse(c.last_synced_at as string) < 12 * 3_600_000) continue;
     if (isChannel(c.platform)) results.push({ espaco: c.workspace_id, plataforma: c.platform, ...(await syncChannel(sb, env, { id: c.id as string, workspace_id: c.workspace_id as string, platform: c.platform }, "agendada")) });
   }

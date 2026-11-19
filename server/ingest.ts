@@ -6,6 +6,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { serviceClient } from "./connections.js";
 import { dispatchEvent } from "./webhooks.js";
+import { deliverConversion } from "./destinations.js";
 
 type Env = Record<string, string | undefined>;
 type Json = Record<string, unknown>;
@@ -21,14 +22,15 @@ export const EVENT_TYPES: Record<string, string> = {
 export const typeLabel = (e: string) => EVENT_TYPES[e.toLowerCase()] ?? (e.charAt(0).toUpperCase() + e.slice(1)).slice(0, 60);
 
 /** Grava uma conversão, atribui à campanha pela UTM (nome ou ID externo) e avisa os webhooks. */
-export async function registerConversion(sb: SupabaseClient, ws: string, c: { type: string; value?: number; externalId?: string; source: string; page?: string; siteId?: string | null; visitorId?: string; utm?: Record<string, string>; contact?: Record<string, string>; campaignId?: string | null }) {
+/** env presente = reenvia aos destinos configurados (Meta, TikTok). */
+export async function registerConversion(sb: SupabaseClient, ws: string, c: { type: string; value?: number; externalId?: string; source: string; page?: string; siteId?: string | null; visitorId?: string; utm?: Record<string, string>; contact?: Record<string, string>; campaignId?: string | null; clickIds?: Record<string, string>; ip?: string | null; userAgent?: string | null; url?: string | null }, env?: Env) {
   let campaignId = c.campaignId ?? null;
   const camp = c.utm?.campaign || c.utm?.id;
   if (!campaignId && camp) {
     const { data } = await sb.from("campaigns").select("id").eq("workspace_id", ws).or(`external_id.eq.${camp.replace(/[,()]/g, "")},name.ilike.${camp.replace(/[%,()]/g, "")}`).limit(1);
     campaignId = (data?.[0]?.id as string | undefined) ?? null;
   }
-  const row = { workspace_id: ws, type: typeLabel(c.type), source: c.source, page: c.page || null, campaign_id: campaignId, value: Math.max(0, Math.round((Number(c.value) || 0) * 100) / 100), status: "Aceito", site_id: c.siteId ?? null, external_id: c.externalId || null, visitor_id: c.visitorId || null, utm: c.utm ?? {}, contact: c.contact ?? {} };
+  const row = { workspace_id: ws, type: typeLabel(c.type), source: c.source, page: c.page || null, campaign_id: campaignId, value: Math.max(0, Math.round((Number(c.value) || 0) * 100) / 100), status: "Aceito", site_id: c.siteId ?? null, external_id: c.externalId || null, visitor_id: c.visitorId || null, utm: c.utm ?? {}, contact: c.contact ?? {}, click_ids: c.clickIds ?? {} };
   const { data, error } = c.externalId
     ? await sb.from("conversion_events").upsert(row, { onConflict: "workspace_id,external_id", ignoreDuplicates: true }).select("id, type, value, campaign_id, received_at")
     : await sb.from("conversion_events").insert(row).select("id, type, value, campaign_id, received_at");
@@ -42,7 +44,8 @@ export async function registerConversion(sb: SupabaseClient, ws: string, c: { ty
     const { data: lead } = await sb.from("leads").insert({ workspace_id: ws, campaign_id: campaignId, platform, name: c.contact?.name || c.contact?.email || c.contact?.phone || "Lead", email: c.contact?.email || null, phone: c.contact?.phone || null }).select("id, name, email, phone, status, submitted_at").single();
     if (lead) await dispatchEvent(sb, ws, "lead.criado", { ...lead, origem: c.source });
   }
-  return { duplicada: !saved, conversao: saved };
+  const entrega = saved && env ? await deliverConversion(sb, env, ws, { id: saved.id as string, type: row.type, value: row.value, received_at: saved.received_at as string, page: row.page, source: c.source, contact: c.contact, clickIds: { ...(c.clickIds ?? {}), ...(c.visitorId ? { visitor: c.visitorId } : {}) }, ip: c.ip, userAgent: c.userAgent, url: c.url }).catch((e) => ({ erro: e instanceof Error ? e.message : String(e) })) : null;
+  return { duplicada: !saved, conversao: saved, ...(entrega ? { destinos: entrega } : {}) };
 }
 
 const hostOk = (origin: string | null, domain: string) => {
@@ -77,7 +80,11 @@ export async function handleIngest(req: Request, env: Env): Promise<Response> {
     await sb.from("site_visits").insert({ workspace_id: site.workspace_id, site_id: site.id, visitor_id: str(b.v, 80) || null, path: path || null, referrer: str(b.ref, 500) || null, utm_source: utm.source ?? null, utm_medium: utm.medium ?? null, utm_campaign: utm.campaign ?? null, device: /mobi|android|iphone/i.test(ua) ? "Celular" : "Computador" });
   } else {
     const contact = Object.fromEntries(["email", "phone", "name"].map((k) => [k, str(p[k], 200)]).filter(([, v]) => v)) as Record<string, string>;
-    await registerConversion(sb, site.workspace_id as string, { type: ev, value: Number(p.value), externalId: str(p.id ?? p.order_id, 120), source: "Tag do site", page: path, siteId: site.id as string, visitorId: str(b.v, 80), utm, contact });
+    const ids = (b.ids ?? {}) as Json;
+    const clickIds = Object.fromEntries(["fbp", "fbc", "fbclid", "ttclid", "gclid"].map((k) => [k, str(ids[k], 300)]).filter(([, v]) => v)) as Record<string, string>;
+    if (!clickIds.fbc && clickIds.fbclid) clickIds.fbc = `fb.1.${Date.now()}.${clickIds.fbclid}`;
+    const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || req.headers.get("x-real-ip");
+    await registerConversion(sb, site.workspace_id as string, { type: ev, value: Number(p.value), externalId: str(p.id ?? p.order_id, 120), source: "Tag do site", page: path, siteId: site.id as string, visitorId: str(b.v, 80), utm, contact, clickIds, ip, userAgent: ua || null, url: str(b.url, 1000) || null }, env);
   }
   await sb.from("tracked_sites").update({ last_event_at: new Date().toISOString(), events_count: ((site.events_count as number) ?? 0) + 1 }).eq("id", site.id);
   return reply(200, { ok: true });

@@ -35,6 +35,8 @@ const OAuthAuthorize = lazy(() => import("@/pages/oauth/Authorize"));
 const MediaUpload = lazy(() => import("@/pages/oauth/Upload"));
 
 const conv = () => import("@/pages/ads/Conversions");
+const liveConv = () => import("@/pages/ads/LiveConversions");
+const liveHome = () => import("@/pages/live/LiveHome");
 const assets = () => import("@/pages/ads/Assets");
 const dev = () => import("@/pages/dev/Developers");
 const phone = () => import("@/pages/comm/Phone");
@@ -57,7 +59,7 @@ const ConsoleTeam = lazy(() => import("@/pages/dev/Developers").then((m) => ({ d
 
 function HomeRoute() {
   const { mode } = useAuth();
-  return mode === "demo" ? N(biz, "Home") : <Navigate to="/anuncios" replace />;
+  return mode === "demo" ? N(biz, "Home") : N(liveHome, "LiveHome");
 }
 
 const S = (el: JSX.Element) => <Suspense fallback={<LoadingState />}>{el}</Suspense>;
@@ -107,9 +109,9 @@ const router = createBrowserRouter([
       { path: "anuncios/campanhas", element: S(<Campaigns />) },
       { path: "anuncios/criativos", element: S(<Creatives />) },
       { path: "anuncios/leads", element: S(<Leads />) },
-      { path: "anuncios/conversoes", element: N(conv, "ConversionsOverview") },
+      { path: "anuncios/conversoes", element: L(N(liveConv, "LiveConversionsOverview"), N(conv, "ConversionsOverview")) },
       { path: "anuncios/conversoes/eventos", element: N(conv, "ConversionEvents") },
-      { path: "anuncios/conversoes/destinos", element: N(conv, "ConversionDestinations") },
+      { path: "anuncios/conversoes/destinos", element: L(N(liveConv, "LiveConversionDestinations"), N(conv, "ConversionDestinations")) },
       { path: "anuncios/conversoes/fontes", element: L(N(liveWs, "LiveConversionSources"), N(conv, "ConversionSources")) },
       { path: "anuncios/publicos", element: N(assets, "Audiences") },
       { path: "anuncios/formularios", element: N(assets, "LeadForms") },

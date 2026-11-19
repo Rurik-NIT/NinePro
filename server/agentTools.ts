@@ -303,19 +303,21 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "registrar_conversao", title: "Registrar conversão", write: true,
-    description: "Registra uma conversão vinda do seu sistema (venda, lead, cadastro…). Atribui à campanha pela UTM (nome ou ID) e avisa os webhooks (conversao.recebida). Use id_externo para não duplicar.",
+    description: "Registra uma conversão vinda do seu sistema (venda, lead, cadastro…). Atribui à campanha pela UTM (nome ou ID), avisa os webhooks (conversao.recebida) e reenvia para os destinos configurados (API de Conversões da Meta, Events API do TikTok). Use id_externo para não duplicar.",
     input: { type: "object", properties: {
       tipo: { type: "string", description: "purchase, lead, signup, add_to_cart, initiate_checkout, contact, schedule, subscribe ou um nome livre" },
       valor: { type: "number", minimum: 0 }, id_externo: { type: "string", description: "ID do pedido/lead no seu sistema" },
       utm_source: { type: "string" }, utm_medium: { type: "string" }, utm_campaign: { type: "string" }, campanha_id: { type: "string", format: "uuid" },
       email: { type: "string" }, telefone: { type: "string" }, nome: { type: "string" }, pagina: { type: "string" },
+      ids: { type: "object", description: "IDs de clique para casar com o anúncio: fbp, fbc, fbclid (Meta), ttclid (TikTok), gclid (Google)", additionalProperties: { type: "string" } },
+      ip: { type: "string", description: "IP do cliente (melhora a correspondência na Meta e no TikTok)" }, user_agent: { type: "string" }, url: { type: "string", description: "Página onde a conversão aconteceu" },
     }, required: ["tipo"], additionalProperties: false },
     run: async (ctx, a) => {
       const tipo = str(a.tipo, 60);
       if (!tipo) throw new ToolError(400, "Informe o tipo da conversão.");
       const utm = Object.fromEntries([["source", a.utm_source], ["medium", a.utm_medium], ["campaign", a.utm_campaign]].map(([k, v]) => [k, str(v, 200)]).filter(([, v]) => v));
       const contact = Object.fromEntries([["email", a.email], ["phone", a.telefone], ["name", a.nome]].map(([k, v]) => [k, str(v, 200)]).filter(([, v]) => v));
-      return registerConversion(ctx.sb, ctx.ws, { type: tipo, value: Number(a.valor) || 0, externalId: str(a.id_externo, 120), source: "API", page: str(a.pagina, 300), utm, contact, campaignId: a.campanha_id ? needUuid(a.campanha_id, "campanha_id") : null });
+      return registerConversion(ctx.sb, ctx.ws, { type: tipo, value: Number(a.valor) || 0, externalId: str(a.id_externo, 120), source: "API", page: str(a.pagina, 300), utm, contact, campaignId: a.campanha_id ? needUuid(a.campanha_id, "campanha_id") : null, clickIds: Object.fromEntries(["fbp", "fbc", "fbclid", "ttclid", "gclid"].map((k) => [k, str((a.ids as Json | undefined)?.[k], 300)]).filter(([, v]) => v)), ip: str(a.ip, 60) || null, userAgent: str(a.user_agent, 500) || null, url: str(a.url, 1000) || null }, ctx.env);
     },
   },
   {
