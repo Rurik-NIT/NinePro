@@ -9,6 +9,7 @@ import { channelLabel, checkPost, createBroadcast, publishPost, refreshMediaStat
 import { cleanOptions, describeOptions, POST_OPTIONS, type OptKind } from "../src/config/postOptions.js";
 import { importPostsCsv } from "./postImport.js";
 import { loadAnalytics } from "./analytics.js";
+import { BillingError, requireActive } from "./billing.js";
 const CHANNEL_LABELS: Record<string, string> = Object.fromEntries(Object.entries(CHANNELS).map(([k, v]) => [k, v.label]));
 import { CHANNELS, PUBLISHABLE, type ChannelId } from "./platforms/index.js";
 import { listUploads, makeUploadToken, readUploadToken } from "./media.js";
@@ -974,5 +975,6 @@ export async function runTool(ctx: ToolCtx, name: string, args: Json) {
     ctx = { ...ctx, ws: perfil, scopes, canWrite: scopes.some((s) => s !== "leitura" && s !== "todos_espacos") };
   }
   if (!allowed(ctx, tool)) throw new ToolError(403, ctx.scopes && tool.write ? `Sem permissão para esta ação (precisa de “${scopeOf(tool)}”). Conecte de novo liberando essa permissão.` : "Esta chave é somente leitura.");
+  if (tool.write) await requireActive(ctx.sb, ctx.ws).catch((e) => { throw e instanceof BillingError ? new ToolError(402, e.message) : e; });
   return tool.run(ctx, args ?? {});
 }

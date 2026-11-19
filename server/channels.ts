@@ -13,6 +13,7 @@ import { optList, optStr, type NetOptions } from "./platforms/types.js";
 import { checkOptions, cleanOptions, type OptKind, type PostOptions } from "../src/config/postOptions.js";
 import { importPostsCsv } from "./postImport.js";
 import { loadAnalytics } from "./analytics.js";
+import { BillingError, requireActive } from "./billing.js";
 import * as IG from "./platforms/instagram.js";
 import * as WA from "./platforms/whatsapp.js";
 import type { WebhookEvent } from "./events.js";
@@ -549,6 +550,7 @@ export async function publishPost(sb: SupabaseClient, env: Env, postId: string, 
   const { data: post } = await sb.from("posts").select("*").eq("id", postId).maybeSingle();
   if (!post) throw new PlatformError("Publicação não encontrada.");
   if (post.status === "aguardando_aprovacao" && !opts.approved) throw new PlatformError("Esta publicação aguarda a aprovação de um administrador.");
+  await requireActive(sb, post.workspace_id as string).catch((e) => { throw new PlatformError(e.message); });
   const ws = post.workspace_id as string;
   const ids = (post.channel_account_ids as string[]) ?? [];
   if (!ids.length) throw new PlatformError("Escolha ao menos uma conta.");
@@ -748,7 +750,9 @@ export async function handleChannels(req: Request, env: Env): Promise<Response> 
   const isAdmin = ["owner", "admin"].includes(mem.role as string);
   const ctx: ChannelCtx = { sb, env, ws, userId: u.user.id, role: mem.role as string, source: "app" };
   const str = (k: string) => String(body[k] ?? "");
+  const SENDS = new Set(["send_message", "send_template", "comment_reply", "broadcast_create", "post_publish", "post_import", "seq_enroll", "template_create"]);
   try {
+    if (SENDS.has(String(body.action)) || (body.action === "post_save" && body.mode !== "rascunho") || (body.action === "seq_status" && body.status === "ativa") || (body.action === "post_review" && body.approve === true)) await requireActive(sb, ws);
     switch (body.action) {
       case "send_message": {
         const media = body.mediaUrl ? { url: str("mediaUrl"), type: (["image", "video", "document", "audio"].includes(str("mediaType")) ? str("mediaType") : "image") as "image" } : undefined;
@@ -883,6 +887,7 @@ export async function handleChannels(req: Request, env: Env): Promise<Response> 
   } catch (e) {
     if (e instanceof PlatformError) return json(400, { error: e.expired ? "As credenciais do canal expiraram. Reconecte em Conexões." : e.message });
     if (e instanceof QueueError || e instanceof SequenceError) return json(400, { error: e.message });
+    if (e instanceof BillingError) return json(402, { error: e.message, codigo: e.code });
     console.error(e);
     return json(500, { error: FRIENDLY });
   }

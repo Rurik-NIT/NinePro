@@ -239,7 +239,7 @@ export const groupOf = (id: string) => NAV.find((g) => g.items.some((i) => i.id 
 /** Itens que dependem de serviços externos ainda não contratados: somem do menu com o banco conectado. */
 export const LIVE_HIDDEN = new Set([
   "inbox-reviews", "commerce", "creators", "wa-flows", "wa-groups", "wa-conversions", "imessage", "phone",
-  "set-usage", "set-billing", "set-security", "set-retention", "set-notifications", "set-apps", "set-slack", "set-leaderboard", "set-ai", "set-whitelabel", "set-sso", "set-danger",
+  "set-usage", "set-security", "set-retention", "set-notifications", "set-apps", "set-slack", "set-leaderboard", "set-ai", "set-whitelabel", "set-sso", "set-danger",
   "hashtags", "live", "balance", "account", "ads-keywords", "ads-search-terms", "ads-bids", "ads-catalogs", "ads-partnerships",
 ]);
 const pruneItem = (m: NavItem): NavItem => (m.children ? { ...m, children: m.children.map((g) => ({ ...g, items: g.items.filter((l) => !LIVE_HIDDEN.has(l.id)) })).filter((g) => g.items.length) } : m);

@@ -6,6 +6,7 @@
  *   SUPABASE_URL (ou VITE_SUPABASE_URL)  ·  SUPABASE_SERVICE_ROLE_KEY
  */
 import { createClient, type SupabaseClient, type User } from "@supabase/supabase-js";
+import { BillingError, setPlanManually } from "./billing.js";
 
 type Env = Record<string, string | undefined>;
 type Body = { action?: string; [k: string]: unknown };
@@ -59,6 +60,15 @@ export async function handleAdmin(req: Request, env: Env): Promise<Response> {
   try {
     switch (body.action) {
       case "list": return json(200, await listUsers(sb));
+      case "set_plan": {
+        const wsId = String(body.workspaceId ?? "");
+        const { data: w } = await sb.from("workspaces").select("id, name").eq("id", wsId).maybeSingle();
+        if (!w) return fail(404, "Espaço não encontrado.");
+        try { await setPlanManually(sb, wsId, { plan: String(body.plan ?? ""), status: String(body.status ?? ""), until: body.until ? String(body.until) : null, note: body.note ? String(body.note) : null }); }
+        catch (e) { if (e instanceof BillingError) return fail(400, e.message); throw e; }
+        await audit("alterou_plano", null, { espaco: w.name, plano: body.plan, status: body.status, ate: body.until ?? null });
+        return json(200, { ok: true });
+      }
       case "audit": {
         const { data, error } = await sb.from("admin_audit").select("id, actor_email, action, target_email, detail, created_at").order("created_at", { ascending: false }).limit(200);
         if (error) throw error;
@@ -230,11 +240,12 @@ async function listUsers(sb: SupabaseClient) {
     wsOf.set(m.user_id as string, list);
   }
   const now = Date.now();
-  const { data: allWs } = await sb.from("workspaces").select("id, name, created_at").order("name");
+  const full = await sb.from("workspaces").select("id, name, created_at, plan, plan_status, trial_ends_at, current_period_end, stripe_subscription_id, billing_note").order("name");
+  const allWs = (full.error ? (await sb.from("workspaces").select("id, name, created_at").order("name")).data : full.data) as Record<string, unknown>[] | null;
   const memberCount = new Map<string, number>();
   for (const m of members ?? []) { const w = m.workspaces as unknown as { id: string } | null; if (w) memberCount.set(w.id, (memberCount.get(w.id) ?? 0) + 1); }
   return {
-    workspaces: (allWs ?? []).map((w) => ({ id: w.id as string, name: w.name as string, members: memberCount.get(w.id as string) ?? 0 })),
+    workspaces: (allWs ?? []).map((w) => ({ id: w.id as string, name: w.name as string, members: memberCount.get(w.id as string) ?? 0, createdAt: (w.created_at as string | null) ?? null, plan: (w.plan as string | undefined) ?? null, planStatus: (w.plan_status as string | undefined) ?? null, trialEndsAt: (w.trial_ends_at as string | null | undefined) ?? null, periodEnd: (w.current_period_end as string | null | undefined) ?? null, stripe: !!w.stripe_subscription_id, note: (w.billing_note as string | null | undefined) ?? null })),
     users: users.map((u) => ({
       id: u.id,
       email: u.email ?? "",

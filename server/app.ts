@@ -5,6 +5,7 @@
  *  - rule_preview / rule_run: testar uma regra automática nas campanhas reais (simulação ou execução agora)
  */
 import { DestinationError, saveDestination } from "./destinations.js";
+import { billingStatus, BillingError, createCheckout, createPortal, requireActive, requireLimit } from "./billing.js";
 import { createClient, type SupabaseClient, type User } from "@supabase/supabase-js";
 import { randomBytes } from "node:crypto";
 import { runRule } from "./rules.js";
@@ -76,7 +77,19 @@ export async function handleApp(req: Request, env: Env): Promise<Response> {
   if (!role) return json(403, { error: "Você não faz parte deste espaço." });
   const isAdmin = role === "owner" || role === "admin";
 
+  const origin = env.PUBLIC_URL?.replace(/\/$/, "") || new URL(req.url).origin;
+  const billing = async (fn: () => Promise<unknown>) => { try { return json(200, await fn()); } catch (e) { if (e instanceof BillingError) return json(e.code === "config" ? 400 : 402, { error: e.message, codigo: e.code }); throw e; } };
   switch (body.action) {
+    /* ---------------------------------------------------------------- plano e assinatura */
+    case "billing_status": return billing(() => billingStatus(sb, env, ws));
+    case "billing_checkout": {
+      if (!isAdmin) return json(403, { error: "Só o dono ou um admin do espaço pode assinar." });
+      return billing(() => createCheckout(sb, env, ws, str(body.plan, 20), who.user.email, origin));
+    }
+    case "billing_portal": {
+      if (!isAdmin) return json(403, { error: "Só o dono ou um admin do espaço pode gerenciar a assinatura." });
+      return billing(() => createPortal(sb, env, ws, origin));
+    }
     /* ---------------------------------------------------------------- destinos de conversão (Meta, TikTok) */
     case "dest_save": {
       if (!isAdmin) return json(403, { error: "Só administradores do espaço podem configurar destinos." });
@@ -114,6 +127,7 @@ export async function handleApp(req: Request, env: Env): Promise<Response> {
     }
     case "team_invite": {
       if (!isAdmin) return json(403, { error: "Só administradores do espaço podem convidar pessoas." });
+      try { await requireActive(sb, ws); await requireLimit(sb, ws, "members"); } catch (e) { if (e instanceof BillingError) return json(402, { error: e.message, codigo: e.code }); throw e; }
       const email = str(body.email).toLowerCase();
       const name = str(body.name, 120);
       const newRole = ROLES.includes(String(body.role)) ? String(body.role) : "member";

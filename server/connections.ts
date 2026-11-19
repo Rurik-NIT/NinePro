@@ -6,6 +6,7 @@
  *  - GET  /api/sync     (Vercel Cron, Authorization: Bearer CRON_SECRET)
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { BillingError, requireActive, requireLimit } from "./billing.js";
 import { decryptToken, encryptToken, signState, verifyState } from "./crypto.js";
 import { CHANNELS, CONNECTORS, isChannel, isConnector, isPlatform, PlatformError, PROVIDERS, type AppCreds, type AuthMode, type ConnectorId, type ExchangeResult, type NAccount, type PlatformId, type StoredAuth } from "./platforms/index.js";
 import { syncChannel } from "./channels.js";
@@ -248,6 +249,7 @@ export async function handleConnect(req: Request, env: Env): Promise<Response> {
       case "start": {
         if (!isAdmin) return adminOnly();
         const k = needKey(); if (k) return k;
+        await requireActive(sb, ws); await requireLimit(sb, ws, "connections", 1, platform);
         const mode: AuthMode = body.mode === "app_proprio" ? "app_proprio" : "app_ninepro";
         let app: AppCreds | null;
         if (mode === "app_proprio") {
@@ -270,6 +272,7 @@ export async function handleConnect(req: Request, env: Env): Promise<Response> {
       case "connect_token": {
         if (!isAdmin) return adminOnly();
         const k = needKey(); if (k) return k;
+        await requireActive(sb, ws); await requireLimit(sb, ws, "connections", 1, platform);
         const fields = readFields(prov.tokenFields, (body.fields ?? {}) as Json);
         const ex = await prov.fromToken(env, fields);
         await saveConnection(sb, env, platform, { ws, uid: user.id, mode: "token", ...ex });
@@ -304,6 +307,7 @@ export async function handleConnect(req: Request, env: Env): Promise<Response> {
         return json(400, { error: "Ação desconhecida." });
     }
   } catch (e) {
+    if (e instanceof BillingError) return json(402, { error: e.message, codigo: e.code });
     if (e instanceof PlatformError) return json(400, { error: e.expired ? "As credenciais são inválidas ou expiraram." : e.message });
     console.error(e);
     return json(500, { error: FRIENDLY });

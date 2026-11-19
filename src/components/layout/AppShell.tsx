@@ -1,6 +1,7 @@
+import { useAuth } from "@/lib/auth";
 import * as D from "@radix-ui/react-dialog";
 import { Menu as MenuIcon, Moon, Search, Sun } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { cn } from "@/lib/cn";
 import { useTheme } from "@/lib/theme";
@@ -12,6 +13,8 @@ import { Tooltip } from "@/components/ui/Menu";
 import { CommandPalette } from "./CommandPalette";
 import { Sidebar } from "./Sidebar";
 
+const BillingBanner = lazy(() => import("@/pages/live/LiveBilling").then((m) => ({ default: m.BillingBanner })));
+
 /**
  * AppShell — moldura flutuante: canvas + sidebar em painel + área de trabalho.
  * Gutter de 12px entre moldura, navegação e conteúdo (princípio de espaçamento do CoachIQ,
@@ -22,6 +25,7 @@ export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
   const { pathname } = useLocation();
+  const live = useAuth().mode === "supabase";
 
   useEffect(() => setMobileOpen(false), [pathname]);
 
@@ -50,6 +54,7 @@ export function AppShell() {
 
       <div className="flex min-w-0 flex-1 flex-col lg:overflow-hidden lg:rounded-lg">
         <Header onOpenMenu={() => setMobileOpen(true)} onOpenSearch={() => setCmdOpen(true)} />
+        {live && <Suspense fallback={null}><BillingBanner /></Suspense>}
         <main id="conteudo" tabIndex={-1} className="min-h-0 flex-1 overflow-y-auto outline-none">
           <Outlet />
         </main>

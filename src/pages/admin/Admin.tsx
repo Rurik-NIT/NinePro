@@ -1,3 +1,4 @@
+import { AdminPlans } from "./AdminPlans";
 import { Ban, Building2, Copy, KeyRound, MoreHorizontal, RefreshCw, ScrollText, ShieldCheck, ShieldOff, Trash2, UserCheck, UserPen, UserPlus, Users, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { adminCall, type AdminUser, type AdminWorkspace, type AuditEntry } from "@/lib/adminApi";
@@ -18,6 +19,7 @@ import { DataTable, TableToolbar, type Column } from "@/components/data/DataTabl
 import { KpiStrip } from "@/components/data/Metrics";
 
 const ACTION_LABEL: Record<string, string> = {
+  alterou_plano: "Alterou o plano",
   criou_usuario: "Criou usuário", bloqueou_usuario: "Bloqueou", desbloqueou_usuario: "Desbloqueou", redefiniu_senha: "Redefiniu senha",
   renomeou_usuario: "Renomeou", concedeu_super_admin: "Concedeu super admin", removeu_super_admin: "Removeu super admin", excluiu_usuario: "Excluiu usuário",
   adicionou_ao_espaco: "Adicionou a um espaço", removeu_do_espaco: "Removeu de um espaço",
@@ -134,7 +136,7 @@ export default function Admin() {
             { id: "s", label: "Super admins", value: all.filter((u) => u.isPlatformAdmin).length, format: "integer" },
           ]} />
 
-          <Tabs value={tab} onValueChange={setTab} items={[{ value: "usuarios", label: "Usuários", count: all.length }, { value: "atividade", label: "Atividade", count: audit?.length }]}>
+          <Tabs value={tab} onValueChange={setTab} items={[{ value: "usuarios", label: "Usuários", count: all.length }, { value: "planos", label: "Clientes e planos", count: workspaces.length }, { value: "atividade", label: "Atividade", count: audit?.length }]}>
             <TabPanel value="usuarios" className="pt-4">
               <section className="panel overflow-hidden">
                 <TableToolbar actions={<SegmentedControl size="sm" ariaLabel="Filtrar por status" value={filter} onValueChange={setFilter} options={[
@@ -146,6 +148,7 @@ export default function Admin() {
                   empty={<EmptyState compact icon={<Users />} title={q || filter !== "todos" ? "Nenhum usuário com esse filtro" : "Nenhum usuário ainda"} description={q || filter !== "todos" ? "Ajuste a busca ou o filtro." : "Crie o primeiro acesso para um cliente."} />} />
               </section>
             </TabPanel>
+            <TabPanel value="planos" className="pt-4"><AdminPlans workspaces={workspaces} onChanged={() => void load()} /></TabPanel>
             <TabPanel value="atividade" className="pt-4">
               <section className="panel overflow-hidden">
                 <DataTable caption="Registro de atividade administrativa" rows={audit ?? []} getId={(a) => String(a.id)} loading={!audit} defaultSort={{ id: "at", dir: "desc" }}

@@ -1,6 +1,6 @@
 import { lazy, Suspense, type ComponentType } from "react";
 import { DemoOnly } from "@/components/feedback/ComingSoon";
-import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
+import { createBrowserRouter, Navigate, RouterProvider, useLocation } from "react-router-dom";
 import { ThemeProvider } from "@/lib/theme";
 import { ThemeSync } from "@/lib/themeStore";
 import { FiltersProvider } from "@/lib/filters";
@@ -26,6 +26,7 @@ const Settings = lazy(() => import("@/pages/Settings"));
 const DesignSystem = lazy(() => import("@/pages/DesignSystem"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 const Login = lazy(() => import("@/pages/auth/Login"));
+const Landing = lazy(() => import("@/pages/public/Landing"));
 const Privacy = lazy(() => import("@/pages/legal/Privacy"));
 const Terms = lazy(() => import("@/pages/legal/Terms"));
 const DataDeletion = lazy(() => import("@/pages/legal/DataDeletion"));
@@ -38,6 +39,7 @@ const MediaUpload = lazy(() => import("@/pages/oauth/Upload"));
 const conv = () => import("@/pages/ads/Conversions");
 const liveConv = () => import("@/pages/ads/LiveConversions");
 const liveHome = () => import("@/pages/live/LiveHome");
+const liveBilling = () => import("@/pages/live/LiveBilling");
 const assets = () => import("@/pages/ads/Assets");
 const dev = () => import("@/pages/dev/Developers");
 const phone = () => import("@/pages/comm/Phone");
@@ -156,9 +158,10 @@ const router = createBrowserRouter([
       { path: "webhooks", element: N(dev, "Webhooks") },
       { path: "logs", element: N(dev, "Logs") },
 
-      { path: "uso", element: <DemoOnly title="Uso" area="o faturamento">{N(biz, "Usage")}</DemoOnly> },
-      { path: "faturamento", element: <DemoOnly title="Faturamento" area="o faturamento">{N(biz, "Billing")}</DemoOnly> },
+      { path: "uso", element: L(N(liveBilling, "LiveBilling"), N(biz, "Usage")) },
+      { path: "faturamento", element: L(N(liveBilling, "LiveBilling"), N(biz, "Billing")) },
       { path: "saldo", element: <Navigate to="/faturamento" replace /> },
+      { path: "entrar", element: <Navigate to="/" replace /> },
       { path: "configuracoes", element: S(<Settings />) },
       { path: "design-system", element: S(<DesignSystem />) },
       { path: "admin", element: S(<Admin />) },
@@ -191,9 +194,10 @@ const router = createBrowserRouter([
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { mode, loading, session } = useAuth();
   const { loading: wsLoading, current } = useWorkspace();
+  const { pathname } = useLocation();
   if (mode === "demo") return children;
   if (loading) return <LoadingState label="Verificando sessão…" className="h-full" />;
-  if (!session) return S(<Login />);
+  if (!session) return pathname === "/" ? S(<Landing />) : S(<Login />);
   if (wsLoading && !current) return <LoadingState label="Carregando espaço de trabalho…" className="h-full" />;
   if (!current) return <LoadingState label="Preparando seu espaço de trabalho…" className="h-full" />;
   return children;

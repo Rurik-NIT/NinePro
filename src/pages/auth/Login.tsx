@@ -12,7 +12,7 @@ const ALLOW_SIGNUP = import.meta.env.VITE_ALLOW_SIGNUP === "true";
 
 export default function Login() {
   const { signIn, signUp, resetPassword } = useAuth();
-  const [mode, setMode] = useState<"entrar" | "criar" | "recuperar">("entrar");
+  const [mode, setMode] = useState<"entrar" | "criar" | "recuperar">(() => (new URLSearchParams(window.location.search).has("criar") ? "criar" : "entrar"));
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

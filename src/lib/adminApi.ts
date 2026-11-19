@@ -11,7 +11,7 @@ export interface AdminUser {
   isPlatformAdmin: boolean;
   workspaces: { id: string; name: string; role: string }[];
 }
-export interface AdminWorkspace { id: string; name: string; members: number }
+export interface AdminWorkspace { id: string; name: string; members: number; createdAt?: string | null; plan?: string | null; planStatus?: string | null; trialEndsAt?: string | null; periodEnd?: string | null; stripe?: boolean; note?: string | null }
 export interface AuditEntry { id: number; actor_email: string | null; action: string; target_email: string | null; detail: Record<string, unknown>; created_at: string }
 
 /** Chama o backend do super admin (/api/admin) com o token da sessão atual. */
