@@ -19,6 +19,8 @@ export default {
       line: v("line"),
       "line-soft": v("line-soft"),
       "line-strong": v("line-strong"),
+      field: v("field"),
+      "field-line": v("field-line"),
       text: v("text"),
       "text-soft": v("text-soft"),
       "text-muted": v("text-muted"),

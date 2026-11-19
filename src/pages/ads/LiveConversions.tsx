@@ -110,7 +110,7 @@ export function LiveConversionDestinations() {
                 {d && <div className="flex flex-col items-end"><span className="num text-body font-bold">{formatValue(d.sent_count, "integer")}</span><span className="t-caption">{d.last_sent_at ? `último em ${formatDateTime(new Date(d.last_sent_at))}` : "eventos enviados"}</span></div>}
                 {d ? <StatusBadge tone={!d.enabled ? "neutral" : d.last_error ? "warning" : "positive"}>{!d.enabled ? "Pausado" : d.last_error ? "Com erro" : d.test_code ? "Testando" : "Enviando"}</StatusBadge> : <StatusBadge tone="neutral">Desligado</StatusBadge>}
                 {admin && (d ? <span className="flex items-center gap-1"><Switch size="sm" ariaLabel={`Ativar ${INFO[p].label}`} checked={d.enabled} onCheckedChange={(v) => void toggle(d, v)} /><Button size="sm" onClick={() => setEditing(p)}>Editar</Button><IconButton size="sm" label="Remover destino" onClick={() => setRemoving(d)}><Trash2 /></IconButton></span>
-                  : <Button size="sm" variant="primary" icon={<KeyRound />} onClick={() => setEditing(p)}>Configurar</Button>)}
+                  : <Button size="sm" variant="tinted" icon={<KeyRound />} onClick={() => setEditing(p)}>Configurar</Button>)}
               </li>
             );
           })}

@@ -20,18 +20,29 @@ const text: Record<Tone, string> = {
   accent: "text-accent-text",
 };
 
+const tint: Record<Tone, string> = {
+  positive: "bg-positive-tint",
+  negative: "bg-negative-tint",
+  warning: "bg-warning-tint",
+  info: "bg-info-tint",
+  neutral: "bg-soft",
+  accent: "bg-accent-tint",
+};
+
 /**
- * StatusBadge — estado de entidade (entrega, lead, regra).
- * Sem pílula colorida: ponto + rótulo. Cor nunca é o único sinal (o texto nomeia o estado).
+ * StatusBadge — estado de entidade (conexão, publicação, lead, regra).
+ * Selo suave: fundo tingido + ponto + rótulo. A cor nunca é o único sinal (o texto nomeia o estado),
+ * e o rótulo sempre começa com maiúscula (“ativo” do banco vira “Ativo”).
  */
-export function StatusBadge({ tone, children, pulse }: { tone: Tone; children: ReactNode; pulse?: boolean }) {
+export function StatusBadge({ tone, children, pulse, className }: { tone: Tone; children: ReactNode; pulse?: boolean; className?: string }) {
+  const label = typeof children === "string" && children ? children[0].toUpperCase() + children.slice(1) : children;
   return (
-    <span className={cn("inline-flex items-center gap-1.5 whitespace-nowrap text-secondary font-semibold", text[tone])}>
-      <span className="relative flex size-1.5">
+    <span className={cn("inline-flex h-[22px] max-w-full items-center gap-1.5 whitespace-nowrap rounded-full px-2 text-[12px] font-semibold leading-none", tint[tone], text[tone], className)}>
+      <span className="relative flex size-1.5 shrink-0">
         {pulse && <span className={cn("absolute inline-flex size-full animate-ping rounded-full opacity-60", dot[tone])} />}
         <span className={cn("relative inline-flex size-1.5 rounded-full", dot[tone])} />
       </span>
-      {children}
+      <span className="truncate">{label}</span>
     </span>
   );
 }

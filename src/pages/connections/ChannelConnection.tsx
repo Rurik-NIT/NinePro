@@ -85,7 +85,7 @@ export function ChannelConnection({ kind }: { kind: Kind }) {
 
   const icon = NETWORK[kind].icon;
   const ownWebhook = conn && conn.auth_mode !== "app_ninepro" && isInbox(kind);
-  const statusBadge = !conn ? <span className="t-caption">Não conectado</span>
+  const statusBadge = !conn ? <StatusBadge tone="neutral">Não conectado</StatusBadge>
     : conn.status === "ativa" ? <span className="flex flex-wrap items-center gap-2"><StatusBadge tone="positive">Conectado{conn.external_user_name ? ` como ${conn.external_user_name}` : ""}</StatusBadge><Tag>{conn.auth_mode === "token" ? (["telegram", "discord", "bluesky"].includes(kind) ? guide.loginLabel : "Token de acesso") : conn.auth_mode === "app_proprio" ? "App da empresa" : guide.loginLabel}</Tag></span>
     : conn.status === "expirada" ? <StatusBadge tone="warning">Autorização expirada</StatusBadge>
     : <StatusBadge tone="negative">Erro na última atualização</StatusBadge>;
@@ -95,11 +95,11 @@ export function ChannelConnection({ kind }: { kind: Kind }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-center gap-3">
           <span className="grid size-10 place-items-center rounded-md border border-line bg-surface-2 text-text-muted [&_svg]:size-[18px]">{icon}</span>
-          <div className="flex flex-col gap-0.5"><span className="t-title">{guide.label}</span>{conn === undefined ? <span className="t-caption">Carregando…</span> : statusBadge}</div>
+          <div className="flex flex-col items-start gap-1"><span className="t-title">{guide.label}</span>{conn === undefined ? <span className="t-caption">Carregando…</span> : statusBadge}</div>
         </div>
         <div className="flex flex-wrap gap-2">
           {conn && conn.status !== "expirada" && <Button size="sm" icon={<RefreshCw className={busy ? "animate-spin" : ""} />} disabled={busy} onClick={() => void sync()}>{busy ? "Atualizando…" : "Atualizar"}</Button>}
-          {admin && (!conn || conn.status !== "ativa") && <Button size="sm" variant="primary" icon={<Cable />} disabled={busy} onClick={() => setConnecting(true)}>{conn ? "Reconectar" : "Conectar"}</Button>}
+          {admin && (!conn || conn.status !== "ativa") && <Button size="sm" variant={conn ? "primary" : "tinted"} icon={<Cable />} disabled={busy} onClick={() => setConnecting(true)}>{conn ? "Reconectar" : "Conectar"}</Button>}
           {admin && conn && <Button size="sm" variant="ghost" icon={<Unplug />} disabled={busy} onClick={() => setConfirmOff(true)}>Desconectar</Button>}
         </div>
       </div>

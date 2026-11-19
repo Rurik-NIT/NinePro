@@ -95,6 +95,8 @@
   --line: #232926;                     /* divisores e bordas de painel */
   --line-soft: #1c211f;                /* regras internas de tabela */
   --line-strong: var(--graphite-300);  /* checkbox, radio, dropzone */
+  --field: color-mix(in srgb, var(--canvas) 55%, var(--surface));          /* fundo de input: levemente afundado */
+  --field-line: color-mix(in srgb, var(--line-strong) 70%, var(--line));   /* borda de input: visível sem gritar */
 
   --text: #eef2ef;
   --text-soft: var(--graphite-700);
@@ -155,6 +157,8 @@
   --line: #e1e4df;
   --line-soft: #eceee9;
   --line-strong: #c9cfc9;
+  --field: var(--surface);
+  --field-line: color-mix(in srgb, var(--line-strong) 80%, var(--line));
 
   --text: #121513;
   --text-soft: #3a413e;

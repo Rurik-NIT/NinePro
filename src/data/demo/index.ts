@@ -168,9 +168,10 @@ export function dailySeries(campaigns: Campaign[], r: DateRange) {
 
 /* ---------- Leads ---------- */
 export type LeadStatus = "novo" | "contatado" | "qualificado" | "venda" | "descartado";
-export const LEAD_STATUS: Record<LeadStatus, { label: string; tone: "info" | "neutral" | "warning" | "positive" | "negative" }> = {
-  novo: { label: "Novo", tone: "info" }, contatado: { label: "Contatado", tone: "neutral" }, qualificado: { label: "Qualificado", tone: "warning" },
-  venda: { label: "Venda", tone: "positive" }, descartado: { label: "Descartado", tone: "negative" },
+export const LEAD_STATUS: Record<LeadStatus, { label: string; tone: "info" | "neutral" | "warning" | "positive" | "negative" | "accent" }> = {
+  // funil: novo (azul) → contatado, aguardando retorno (âmbar) → qualificado (acento) → venda (verde); descartado é neutro, não erro
+  novo: { label: "Novo", tone: "info" }, contatado: { label: "Contatado", tone: "warning" }, qualificado: { label: "Qualificado", tone: "accent" },
+  venda: { label: "Venda", tone: "positive" }, descartado: { label: "Descartado", tone: "neutral" },
 };
 const FIRST = ["Ana", "Bruno", "Carla", "Diego", "Elisa", "Fábio", "Gabriela", "Heitor", "Isabela", "João", "Karina", "Lucas", "Marina", "Nicolas", "Olívia", "Pedro", "Rafaela", "Samuel", "Tainá", "Vitor"];
 const LAST = ["Almeida", "Barros", "Cardoso", "Duarte", "Esteves", "Farias", "Gomes", "Lima", "Moreira", "Nogueira", "Pacheco", "Rocha", "Siqueira", "Teixeira"];

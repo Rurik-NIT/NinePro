@@ -3,7 +3,7 @@ import { Search, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 export const fieldBase =
-  "w-full bg-surface text-text placeholder:text-text-dim border border-line rounded-md transition-[border-color,box-shadow] duration-150 hover:border-line-strong focus:outline-none focus:border-accent-line-strong focus:ring-[3px] focus:ring-accent-tint disabled:opacity-50 disabled:cursor-not-allowed aria-[invalid=true]:border-negative";
+  "w-full bg-field text-text placeholder:text-text-dim border border-field-line rounded-md transition-[border-color,box-shadow] duration-150 hover:border-line-strong focus:outline-none focus:border-accent-line-strong focus:ring-[3px] focus:ring-accent-tint disabled:opacity-50 disabled:cursor-not-allowed aria-[invalid=true]:border-negative";
 
 export interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, "size" | "prefix"> {
   size?: "sm" | "md" | "lg";

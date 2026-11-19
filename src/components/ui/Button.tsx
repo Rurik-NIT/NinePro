@@ -2,7 +2,7 @@ import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 
-export type ButtonVariant = "primary" | "secondary" | "ghost" | "outline" | "danger";
+export type ButtonVariant = "primary" | "tinted" | "secondary" | "ghost" | "outline" | "danger";
 export type ButtonSize = "sm" | "md" | "lg";
 
 const base =
@@ -10,7 +10,9 @@ const base =
 
 const variants: Record<ButtonVariant, string> = {
   /* Primário = acento. Regra: no máximo um por área de tela. */
-  primary: "bg-accent text-accent-ink hover:bg-accent-hover",
+  primary: "bg-accent text-accent-ink hover:bg-accent-hover disabled:bg-soft disabled:text-text-muted disabled:opacity-100",
+  /* Acento suave: ação disponível que não é a principal da tela (ex.: vários “Conectar” numa lista). */
+  tinted: "border border-accent-line bg-accent-tint text-accent-text hover:border-accent-line-strong hover:bg-accent-tint",
   secondary: "bg-soft text-text hover:bg-surface-2 hover:ring-1 hover:ring-line",
   outline: "border border-line bg-surface text-text hover:bg-surface-2 hover:border-line-strong",
   ghost: "text-text-soft hover:text-text hover:bg-soft",

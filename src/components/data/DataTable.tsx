@@ -108,7 +108,7 @@ export function DataTable<T>({
                 style={{ width: c.width }}
                 className={cn(
                   rowH,
-                  "whitespace-nowrap px-3 text-body",
+                  "whitespace-nowrap px-3 py-1.5 text-body",
                   c.align === "right" && "num text-right",
                   c.align === "center" && "text-center",
                   c.sticky && "sticky z-[1] bg-inherit",

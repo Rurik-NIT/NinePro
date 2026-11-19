@@ -5,7 +5,7 @@ import { PLATFORMS, PLATFORM_ORDER, type PlatformId } from "@/data/demo";
 import { Page, PageHeader, Section } from "@/components/layout/AppShell";
 import { Button, buttonClasses } from "@/components/ui/Button";
 import { Link } from "react-router-dom";
-import { Tag } from "@/components/ui/Badge";
+import { StatusBadge, Tag } from "@/components/ui/Badge";
 import { Tooltip } from "@/components/ui/Menu";
 import { InlineNotice } from "@/components/feedback/States";
 import { PlatformDot } from "@/components/data/Platform";
@@ -44,7 +44,7 @@ function ConnectionsList({ onRedo }: { onRedo?: () => void }) {
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <span className="grid size-10 place-items-center rounded-md border border-line bg-surface-2"><PlatformDot id={p} className="size-3.5" /></span>
-                  <div className="flex flex-col"><span className="t-title">{PLATFORMS[p].label}</span><span className="t-caption">Não conectada</span></div>
+                  <div className="flex flex-col items-start gap-1"><span className="t-title">{PLATFORMS[p].label}</span><StatusBadge tone="neutral">Não conectada</StatusBadge></div>
                 </div>
                 {live ? <Tag>Em breve</Tag> : (
                   <Tooltip content="Disponível quando a integração for implementada">

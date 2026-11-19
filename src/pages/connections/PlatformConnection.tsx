@@ -87,7 +87,7 @@ export function PlatformConnection({ platform }: { platform: "meta" | "google" |
 
   const connect = () => setConnecting(true);
 
-  const statusBadge = !conn ? <span className="t-caption">Não conectada</span>
+  const statusBadge = !conn ? <StatusBadge tone="neutral">Não conectada</StatusBadge>
     : conn.status === "ativa" ? <span className="flex flex-wrap items-center gap-2"><StatusBadge tone="positive">Conectada{conn.external_user_name ? ` como ${conn.external_user_name}` : ""}</StatusBadge><Tag>{conn.auth_mode === "token" ? "Token de acesso" : conn.auth_mode === "app_proprio" ? `App da empresa${conn.app_id ? ` · ${conn.app_id.slice(0, 24)}` : ""}` : guide.loginLabel}</Tag></span>
     : conn.status === "expirada" ? <StatusBadge tone="warning">Autorização expirada</StatusBadge>
     : <StatusBadge tone="negative">Erro na última sincronização</StatusBadge>;
@@ -97,11 +97,11 @@ export function PlatformConnection({ platform }: { platform: "meta" | "google" |
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-center gap-3">
           <span className="grid size-10 place-items-center rounded-md border border-line bg-surface-2"><PlatformDot id={platform} className="size-3.5" /></span>
-          <div className="flex flex-col gap-0.5"><span className="t-title">{guide.label}</span>{conn === undefined ? <span className="t-caption">Carregando…</span> : statusBadge}</div>
+          <div className="flex flex-col items-start gap-1"><span className="t-title">{guide.label}</span>{conn === undefined ? <span className="t-caption">Carregando…</span> : statusBadge}</div>
         </div>
         <div className="flex flex-wrap gap-2">
           {conn && conn.status !== "expirada" && <Button size="sm" icon={<RefreshCw className={busy === "sync" ? "animate-spin" : ""} />} disabled={!!busy} onClick={() => void sync(30)}>{busy === "sync" ? "Sincronizando…" : "Sincronizar agora"}</Button>}
-          {admin && (!conn || conn.status !== "ativa") && <Button size="sm" variant="primary" icon={<Cable />} disabled={!!busy} onClick={connect}>{conn ? "Reconectar" : "Conectar"}</Button>}
+          {admin && (!conn || conn.status !== "ativa") && <Button size="sm" variant={conn ? "primary" : "tinted"} icon={<Cable />} disabled={!!busy} onClick={connect}>{conn ? "Reconectar" : "Conectar"}</Button>}
           {admin && conn && <Button size="sm" variant="ghost" icon={<Unplug />} disabled={!!busy} onClick={() => setConfirmOff(true)}>Desconectar</Button>}
         </div>
       </div>
