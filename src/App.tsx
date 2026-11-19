@@ -2,6 +2,7 @@ import { lazy, Suspense, type ComponentType } from "react";
 import { DemoOnly } from "@/components/feedback/ComingSoon";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 import { ThemeProvider } from "@/lib/theme";
+import { ThemeSync } from "@/lib/themeStore";
 import { FiltersProvider } from "@/lib/filters";
 import { AppShell } from "@/components/layout/AppShell";
 import { TooltipProvider } from "@/components/ui/Menu";
@@ -205,6 +206,7 @@ export default function App() {
         <ToastProvider>
           <AuthProvider>
             <WorkspaceProvider>
+              <ThemeSync />
               <DataProvider>
                 <FiltersProvider>
                   <RouterProvider router={router} />

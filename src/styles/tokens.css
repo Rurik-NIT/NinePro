@@ -83,6 +83,8 @@
   color-scheme: dark;
 
   --canvas: var(--graphite-000);       /* fundo atrás de tudo */
+  --sidebar: var(--surface);           /* barra lateral (personalizável) */
+  --table-head: var(--surface-2);      /* cabeçalho das tabelas (personalizável) */
   --surface: var(--graphite-050);      /* sidebar, painéis, popovers */
   --surface-2: var(--graphite-100);    /* linhas selecionadas, segmented */
   --raised: var(--graphite-150);       /* cards dentro de painéis */

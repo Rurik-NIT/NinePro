@@ -2,8 +2,7 @@ import {
   BarChart3, Blocks, Bot, Building2, Cable, CalendarClock, ChartLine, CircleDollarSign, FileText, Gauge, Globe, Hash, Home, Image, Inbox,
   KeyRound, Layers, LayoutGrid, ListChecks, ListOrdered, Megaphone, MessageCircle, MessageSquare, MessagesSquare, Mic, Phone, PhoneCall, Radio,
   Receipt, ScrollText, Send, Settings, ShieldCheck, ShoppingBag, Sparkles, Star, Tag, Target, Ticket, UserRound, Users, Webhook, Workflow,
-  AtSign, BadgeCheck, Contact, FolderSync, Smartphone, Server, Link2, Boxes, AppWindow, type LucideIcon,
-} from "lucide-react";
+  AtSign, BadgeCheck, Contact, FolderSync, Smartphone, Server, Link2, Boxes, AppWindow, Palette, type LucideIcon } from "lucide-react";
 
 /**
  * Navegação do NinePro — espelho funcional do sistema de referência (docs/reverse-engineering/01-navigation-map.md
@@ -155,6 +154,7 @@ export const SETTINGS_NAV: NavItem = {
     { id: "set-profile", label: "Perfil", path: "/configuracoes?secao=perfil", icon: UserRound },
     { id: "set-usage", label: "Uso", path: "/uso", icon: Gauge },
     { id: "set-billing", label: "Faturamento", path: "/faturamento", icon: Receipt },
+    { id: "set-theme", label: "Tema e cores", path: "/configuracoes?secao=tema", icon: Palette },
     { id: "set-security", label: "Segurança", path: "/configuracoes?secao=seguranca", icon: ShieldCheck },
     { id: "set-retention", label: "Retenção de conteúdo", path: "/configuracoes?secao=retencao", icon: FolderSync },
     { id: "set-notifications", label: "Notificações", path: "/configuracoes?secao=notificacoes", icon: Radio },

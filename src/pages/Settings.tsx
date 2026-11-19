@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { cn } from "@/lib/cn";
 import { useTheme, type ThemePreference } from "@/lib/theme";
+import { ThemeCustomizerSection } from "./settings/ThemeCustomizer";
 import { useLocalState } from "@/lib/useLocalState";
 import { useAuth } from "@/lib/auth";
 import { useWorkspace } from "@/lib/workspace";
@@ -90,7 +91,7 @@ export default function Settings() {
   return (
     <Page>
       <PageHeader title={section?.label ?? "Configurações"} />
-      <div className={cn("flex flex-col gap-8", sectionKey === "marca-propria" ? "max-w-[1200px]" : "max-w-[860px]")}>
+      <div className={cn("flex flex-col gap-8", sectionKey === "marca-propria" || sectionKey === "tema" ? "max-w-[1200px]" : "max-w-[860px]")}>
         {sectionKey === "perfil" && (
           <>
             <SettingsGroup title="Perfil" description="Como você aparece para a equipe.">
@@ -124,6 +125,7 @@ export default function Settings() {
           </>
         )}
 
+        {sectionKey === "tema" && <ThemeCustomizerSection />}
         {sectionKey === "seguranca" && <SecuritySection />}
         {sectionKey === "retencao" && <RetentionSection />}
         {sectionKey === "notificacoes" && <NotificationsSection />}

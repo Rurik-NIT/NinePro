@@ -156,7 +156,7 @@ export function DataTable<T>({
         <thead className="sticky top-0 z-[2]">
           <tr>
             {selectable && (
-              <th className="sticky left-0 z-[3] h-9 w-10 border-b border-line bg-surface-2 pl-4">
+              <th className="sticky left-0 z-[3] h-9 w-10 border-b border-line bg-[var(--table-head)] pl-4">
                 <Checkbox ariaLabel="Selecionar todas" checked={allChecked ? true : someChecked ? "indeterminate" : false} onCheckedChange={(v) => onSelectedChange?.(v ? new Set(allIds) : new Set())} />
               </th>
             )}
@@ -169,7 +169,7 @@ export function DataTable<T>({
                   aria-sort={active ? (sort!.dir === "asc" ? "ascending" : "descending") : undefined}
                   style={{ width: c.width }}
                   className={cn(
-                    "t-label h-9 whitespace-nowrap border-b border-line bg-surface-2 px-3 text-left",
+                    "t-label h-9 whitespace-nowrap border-b border-line bg-[var(--table-head)] px-3 text-left",
                     c.align === "right" && "text-right",
                     c.sticky && "sticky z-[3]",
                     c.sticky && (selectable ? "left-10" : "left-0"),

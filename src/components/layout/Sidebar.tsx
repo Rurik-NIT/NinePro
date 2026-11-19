@@ -62,7 +62,7 @@ export function Sidebar({ collapsed, onToggleCollapsed, onNavigate, mobile }: { 
   const isActiveTop = (m: NavItem) => module?.id === m.id || leaf?.id === m.id;
 
   return (
-    <aside aria-label="Navegação principal" className={cn("flex h-full flex-col bg-surface", mobile ? "w-full" : "panel overflow-hidden")}>
+    <aside aria-label="Navegação principal" className={cn("flex h-full flex-col bg-[var(--sidebar)]", mobile ? "w-full" : "panel overflow-hidden")}>
       <div className={cn("flex h-header shrink-0 items-center border-b border-line", collapsed ? "justify-center px-0" : "justify-between pl-4 pr-2")}>
         {collapsed ? (
           <IconButton label="Expandir menu" onClick={onToggleCollapsed}><PanelLeftOpen /></IconButton>
